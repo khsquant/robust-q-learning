@@ -190,6 +190,7 @@ def load(
   Returns:
       An instance of the environment.
   """
+  mjx_env.ensure_menagerie_exists()
   if env_name not in _envs:
     raise ValueError(f"Env '{env_name}' not found. Available envs: {_cfgs.keys()}")
   config = config or get_default_config(env_name)
@@ -212,7 +213,7 @@ def get_domain_randomizer_eval(
     env_name: str,
 ) -> Optional[Callable[[mjx.Model, jax.Array], Tuple[mjx.Model, mjx.Model]]]:
   """Get the default domain randomizer for an environment."""
-  if env_name not in _randomizer:
+  if env_name not in _randomizer_eval:
     print(
         f"Env '{env_name}' does not have a domain randomizer in the locomotion"
         " registry."

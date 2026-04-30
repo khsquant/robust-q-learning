@@ -23,8 +23,8 @@ from mujoco import mjx
 
 from custom_envs import mjx_env
 from mujoco_playground._src import reward as reward_util
-from mujoco_playground._src.manipulation.aloha import aloha_constants as consts
-from mujoco_playground._src.manipulation.aloha import base as aloha_base
+from custom_envs.manipulation.aloha import aloha_constants as consts
+from custom_envs.manipulation.aloha import base as aloha_base
 
 
 def default_config() -> config_dict.ConfigDict:

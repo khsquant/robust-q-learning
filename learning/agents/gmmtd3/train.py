@@ -587,7 +587,6 @@ def train(
     x, y = jnp.meshgrid(jnp.linspace(dr_range_low[0], dr_range_high[0], 32),\
                           jnp.linspace(dr_range_low[1], dr_range_high[1], 32))
     dynamics_params_grid = jnp.c_[x.ravel(), y.ravel()]
-    shape = (num_envs//jax.process_count(), len(dr_range_low) )
     def f(carry, dynamics_param):
       training_state, env_state, buffer_state, key = carry
       key, new_key = jax.random.split(key)
@@ -597,7 +596,7 @@ def train(
           training_state.policy_params,
           training_state.q_params,
           training_state.target_q_params,
-          dynamics_param[None, ...] * jnp.ones((num_envs//jax.process_count(), len(dr_range_low))),
+          dynamics_param[None, ...] * jnp.ones_like(env_state.info["dr_params"]),
           training_state.noise_scales,
           env_state,
           buffer_state,
@@ -751,8 +750,10 @@ def train(
       eval_env,
       episode_length=episode_length,
       action_repeat=action_repeat,
-      randomization_fn=functools.partial(randomization_fn,dr_range=env.dr_range),
-      param_size = dynamics_param_size,
+      randomization_fn=functools.partial(randomization_fn, dr_range=training_dr_range),
+      param_size=dynamics_param_size,
+      dr_range_low=dr_range_low,
+      dr_range_high=dr_range_high,
     )
     evaluator = AdvEvaluator(
         eval_env,

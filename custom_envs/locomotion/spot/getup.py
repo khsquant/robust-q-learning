@@ -23,8 +23,8 @@ from mujoco import mjx
 import numpy as np
 
 from custom_envs import mjx_env
-from mujoco_playground._src.locomotion.spot import base as spot_base
-from mujoco_playground._src.locomotion.spot import spot_constants as consts
+from custom_envs.locomotion.spot import base as spot_base
+from custom_envs.locomotion.spot import spot_constants as consts
 
 
 def default_config() -> config_dict.ConfigDict:

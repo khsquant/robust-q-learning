@@ -39,6 +39,9 @@ def default_config() -> config_dict.ConfigDict:
       episode_length=1000,
       action_repeat=1,
       vision=False,
+      impl="jax",
+      naconmax=0,
+      njmax=20,
   )
 
 

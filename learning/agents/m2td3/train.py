@@ -46,11 +46,8 @@ from brax.envs.base import Wrapper, Env, State
 from brax.training.types import Policy, PolicyParams, PRNGKey, Metrics
 from learning.module.wrapper.adv_wrapper import wrap_for_adv_training
 from learning.module.wrapper.evaluator import Evaluator, AdvEvaluator
-from learning.module.wrapper.drhard_wrapper import wrap_for_hard_dr_training          #changed with m2td3
 from learning.module.wrapper.wrapper import Wrapper, wrap_for_brax_training
 from flax.core import FrozenDict
-
-from learning.module.wrapper.adv_wrapper import wrap_for_adv_training
 
 Metrics = types.Metrics
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -165,6 +162,9 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
+    eval_randomization_fn: Optional[
+        Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
+    ] = None,
     checkpoint_logdir: Optional[str] = None,
     restore_checkpoint_path: Optional[str] = None,
     dr_train_ratio = 1.0,
@@ -236,6 +236,9 @@ def train(
       episode_length=episode_length,
       action_repeat=action_repeat,
       randomization_fn=functools.partial(randomization_fn,dr_range=training_dr_range),
+      param_size=len(dr_range_low),
+      dr_range_low=dr_range_low,
+      dr_range_high=dr_range_high,
   )  # pytype: disable=wrong-keyword-args
 
   obs_shape = env.observation_size
@@ -628,9 +631,7 @@ def train(
       env_keys, (local_devices_to_use, -1) + env_keys.shape[1:]
   )
 
-  dynamics_params = jax.random.uniform(key=param_key, shape=(num_envs // jax.process_count(),len(dr_low)), minval=dr_low, maxval=dr_high)
-  dynamics_params = jnp.reshape(dynamics_params, (local_devices_to_use, -1) + dynamics_params.shape[1:])
-  env_state = jax.pmap(env.reset)(env_keys, dynamics_params)
+  env_state = jax.pmap(env.reset)(env_keys)
   print("obs", jax.tree_util.tree_map( lambda x: x.shape , env_state.obs))
   obs_shape = jax.tree_util.tree_map(
       lambda x: specs.Array(x.shape[-1:], jnp.dtype('float32')), env_state.obs
@@ -674,9 +675,12 @@ def train(
 
   eval_env = copy.deepcopy(environment)
   v_randomization_fn=None
-  if randomization_fn is not None:
+  evaluation_randomization_fn = eval_randomization_fn or randomization_fn
+  if evaluation_randomization_fn is not None:
     v_randomization_fn = functools.partial(
-        randomization_fn, rng=jax.random.split(eval_key, num_eval_envs), dr_range=env.dr_range
+        evaluation_randomization_fn,
+        rng=jax.random.split(eval_key, num_eval_envs),
+        dr_range=env.dr_range,
     )
 
   eval_env = wrap_for_brax_training(

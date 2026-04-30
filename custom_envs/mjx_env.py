@@ -135,13 +135,15 @@ def make_data(
     mocap_pos: Optional[jax.Array] = None,
     mocap_quat: Optional[jax.Array] = None,
     impl: Optional[str] = None,
-    nconmax: Optional[int] = None,
+    naconmax: Optional[int] = None,
+    naccdmax: Optional[int] = None,
     njmax: Optional[int] = None,
     device: Optional[jax.Device] = None,
 ) -> mjx.Data:
   """Initialize MJX Data."""
   data = mjx.make_data(
-      model, impl=impl, nconmax=nconmax, njmax=njmax, device=device
+      model, impl=impl, naconmax=naconmax, naccdmax=naccdmax, njmax=njmax,
+      device=device,
   )
   if qpos is not None:
     data = data.replace(qpos=qpos)
@@ -158,6 +160,33 @@ def make_data(
   return data
 
 
+def init(
+    model: mjx.Model,
+    qpos: Optional[jax.Array] = None,
+    qvel: Optional[jax.Array] = None,
+    ctrl: Optional[jax.Array] = None,
+    act: Optional[jax.Array] = None,
+    mocap_pos: Optional[jax.Array] = None,
+    mocap_quat: Optional[jax.Array] = None,
+    device: Optional[jax.Device] = None,
+) -> mjx.Data:
+  """Initialize and forward MJX Data from an already put MJX model."""
+  data = mjx.make_data(model, device=device)
+  if qpos is not None:
+    data = data.replace(qpos=qpos)
+  if qvel is not None:
+    data = data.replace(qvel=qvel)
+  if ctrl is not None:
+    data = data.replace(ctrl=ctrl)
+  if act is not None:
+    data = data.replace(act=act)
+  if mocap_pos is not None:
+    data = data.replace(mocap_pos=mocap_pos.reshape(model.nmocap, -1))
+  if mocap_quat is not None:
+    data = data.replace(mocap_quat=mocap_quat.reshape(model.nmocap, -1))
+  return mjx.forward(model, data)
+
+
 def step(
     model: mjx.Model,
     data: mjx.Data,
@@ -169,8 +198,7 @@ def step(
     data = mjx.step(model, data)
     return data, None
 
-  return single_step(data, None)[0]
-#   return jax.lax.scan(single_step, data, (), n_substeps)[0]
+  return jax.lax.scan(single_step, data, (), n_substeps)[0]
 
 
 @struct.dataclass

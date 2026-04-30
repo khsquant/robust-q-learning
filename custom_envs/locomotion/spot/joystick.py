@@ -22,11 +22,11 @@ from ml_collections import config_dict
 from mujoco import mjx
 import numpy as np
 
-from mujoco_playground._src import collision
+from custom_envs import collision
 from mujoco_playground._src import gait
 from custom_envs import mjx_env
-from mujoco_playground._src.locomotion.spot import base as spot_base
-from mujoco_playground._src.locomotion.spot import spot_constants as consts
+from custom_envs.locomotion.spot import base as spot_base
+from custom_envs.locomotion.spot import spot_constants as consts
 
 
 def default_config() -> config_dict.ConfigDict:

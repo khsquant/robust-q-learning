@@ -24,7 +24,7 @@ import mujoco
 from mujoco import mjx
 import numpy as np
 
-from mujoco_playground._src import collision
+from custom_envs import collision
 from custom_envs import mjx_env
 
 _FEET_SITES = [
@@ -451,7 +451,7 @@ class Joystick(mjx_env.MjxEnv):
 
   @property
   def xml_path(self) -> str:
-    raise self._xml_path
+    return self._xml_path
 
   @property
   def action_size(self) -> int:

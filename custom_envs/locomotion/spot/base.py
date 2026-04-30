@@ -24,7 +24,7 @@ import mujoco
 from mujoco import mjx
 
 from custom_envs import mjx_env
-from mujoco_playground._src.locomotion.spot import spot_constants as consts
+from custom_envs.locomotion.spot import spot_constants as consts
 
 
 def get_assets() -> Dict[str, bytes]:

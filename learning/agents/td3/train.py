@@ -46,8 +46,6 @@ from brax.envs.base import Wrapper, Env, State
 from brax.training.types import Policy, PolicyParams, PRNGKey, Metrics, Transition
 from learning.module.wrapper.adv_wrapper import wrap_for_adv_training
 from learning.module.wrapper.evaluator import Evaluator, AdvEvaluator
-from learning.module.wrapper.drhard_wrapper import wrap_for_hard_dr_training          #changed with td3
-from learning.module.wrapper.dr_wrapper import wrap_for_dr_training          #changed with td3
 from learning.module.wrapper.wrapper import Wrapper, wrap_for_brax_training
 import wandb
 import numpy as np
@@ -79,6 +77,7 @@ class TrainingState:
 
   policy_optimizer_state: optax.OptState
   policy_params: Params
+  target_policy_params: Params
   q_optimizer_state: optax.OptState
   q_params: Params
   target_q_params: Params
@@ -89,6 +88,14 @@ class TrainingState:
 
 def _unpmap(v):
   return jax.tree_util.tree_map(lambda x: x[0], v)
+
+
+def _uint64_mod(step: types.UInt64, divisor: int) -> jax.Array:
+  """Computes a small integer modulo for Brax UInt64 counters."""
+  hi_mod = step.hi % divisor
+  lo_mod = step.lo % divisor
+  word_mod = (2**32) % divisor
+  return (hi_mod * word_mod + lo_mod) % divisor
 
 
 def _init_training_state(
@@ -117,6 +124,7 @@ def _init_training_state(
   training_state = TrainingState(
       policy_optimizer_state=policy_optimizer_state,
       policy_params=policy_params,
+      target_policy_params=policy_params,
       q_optimizer_state=q_optimizer_state,
       q_params=q_params,
       target_q_params=q_params,
@@ -166,8 +174,9 @@ def train(
     std_min=0.05,
     policy_noise=0.2,
     noise_clip=0.5,
-    custom_wrapper=False,
-    adv_wrapper=False,
+    policy_frequency: int = 2,
+    custom_wrapper=True,
+    adv_wrapper=True,
     distributional_q=False,
     use_wandb=False,
 ):
@@ -187,6 +196,8 @@ def train(
     raise ValueError(
         'No training will happen because min_replay_size >= num_timesteps'
     )
+  if policy_frequency < 1:
+    raise ValueError('policy_frequency must be >= 1')
 
   if max_replay_size is None:
     max_replay_size = num_timesteps
@@ -224,31 +235,22 @@ def train(
   else:
     training_dr_range = None
   training_randomization_fn = None
+  use_adv_wrapper = custom_wrapper and randomization_fn is not None
 
-  if custom_wrapper and randomization_fn is not None:
+  if use_adv_wrapper:
     training_randomization_fn = functools.partial(
           randomization_fn,
           dr_range=training_dr_range,
       )
-    if adv_wrapper:
-        env = wrap_for_adv_training(
-        env,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        randomization_fn=training_randomization_fn,
-        param_size = len(dr_range_low),
-        dr_range_low=dr_range_low,
-        dr_range_high=dr_range_high,
-      )
-    else:
-      env = wrap_for_dr_training(#wrap_for_training(
-          env,
-          episode_length=episode_length,
-          action_repeat=action_repeat,
-          randomization_fn=training_randomization_fn,
-          n_nominals=1,
-          n_envs=num_envs,
-      )  # pytype: disable=wrong-keyword-args
+    env = wrap_for_adv_training(
+      env,
+      episode_length=episode_length,
+      action_repeat=action_repeat,
+      randomization_fn=training_randomization_fn,
+      param_size=len(dr_range_low),
+      dr_range_low=dr_range_low,
+      dr_range_high=dr_range_high,
+    )
 
   else:
     v_randomization_fn = functools.partial(
@@ -327,7 +329,7 @@ def train(
     if distributional_q:
       (critic_loss, (current_q, next_v)), q_params, q_optimizer_state = critic_update(
           training_state.q_params,
-          training_state.policy_params,
+          training_state.target_policy_params,
           training_state.normalizer_params,
           training_state.target_q_params,
           transitions,
@@ -339,7 +341,7 @@ def train(
     else:
       (critic_loss, (current_q, next_v)), q_params, q_optimizer_state = critic_update(
           training_state.q_params,
-          training_state.policy_params,
+          training_state.target_policy_params,
           training_state.normalizer_params,
           training_state.target_q_params,
           transitions,
@@ -347,25 +349,63 @@ def train(
           key_critic,
           optimizer_state=training_state.q_optimizer_state,
       )
-    actor_loss, policy_params, policy_optimizer_state = actor_update(
-        training_state.policy_params,
-        training_state.normalizer_params,
-        training_state.q_params,
-        transitions,
-        key_actor,
-        optimizer_state=training_state.policy_optimizer_state,
-    )
-    # if distributional_q:
-      # tau = 0.1
-    new_target_q_params = jax.tree_util.tree_map(
-        lambda x, y: x * (1 - tau) + y * tau,
-        training_state.target_q_params,
-        q_params,
+
+    def polyak_update(target_params, params):
+      return jax.tree_util.tree_map(
+          lambda x, y: x * (1 - tau) + y * tau,
+          target_params,
+          params,
+      )
+
+    def update_actor_and_targets(_):
+      actor_loss, policy_params, policy_optimizer_state = actor_update(
+          training_state.policy_params,
+          training_state.normalizer_params,
+          q_params,
+          transitions,
+          key_actor,
+          optimizer_state=training_state.policy_optimizer_state,
+      )
+      new_target_q_params = polyak_update(training_state.target_q_params, q_params)
+      new_target_policy_params = polyak_update(
+          training_state.target_policy_params, policy_params
+      )
+      return (
+          actor_loss,
+          policy_params,
+          policy_optimizer_state,
+          new_target_q_params,
+          new_target_policy_params,
+      )
+
+    def skip_actor_and_targets(_):
+      return (
+          jnp.zeros_like(critic_loss),
+          training_state.policy_params,
+          training_state.policy_optimizer_state,
+          training_state.target_q_params,
+          training_state.target_policy_params,
+      )
+
+    new_gradient_steps = training_state.gradient_steps + 1
+    should_update_actor = _uint64_mod(new_gradient_steps, policy_frequency) == 0
+    (
+        actor_loss,
+        policy_params,
+        policy_optimizer_state,
+        new_target_q_params,
+        new_target_policy_params,
+    ) = jax.lax.cond(
+        should_update_actor,
+        update_actor_and_targets,
+        skip_actor_and_targets,
+        operand=None,
     )
 
     metrics = {
         'critic_loss': critic_loss,
         'actor_loss': actor_loss,
+        'actor_updated': should_update_actor.astype(jnp.float32),
         'current_q_min' : current_q.min(),
         'current_q_max' : current_q.max(),
         'current_q_mean' : current_q.mean(),
@@ -377,10 +417,11 @@ def train(
     new_training_state = TrainingState(
         policy_optimizer_state=policy_optimizer_state,
         policy_params=policy_params,
+        target_policy_params=new_target_policy_params,
         q_optimizer_state=q_optimizer_state,
         q_params=q_params,
         target_q_params=new_target_q_params,
-        gradient_steps=training_state.gradient_steps + 1,
+        gradient_steps=new_gradient_steps,
         env_steps=training_state.env_steps,
         normalizer_params=training_state.normalizer_params,
         noise_scales=training_state.noise_scales,
@@ -400,15 +441,11 @@ def train(
   ):
     step_key, key = jax.random.split(key)
     actions, policy_extras = policy(env_state.obs, noise_scales, key)
-    if randomization_fn is not None and custom_wrapper:
-      if adv_wrapper:
-        # params = env_state.info["dr_params"] * (1 - env_state.done[..., None]) + dynamics_params * env_state.done[..., None]
-        nstate = env.step(env_state, actions, dynamics_params)
-        state_size = nstate.obs['state'].shape[-1]
-        previleged_obs_info = nstate.obs['privileged_state'][:, state_size:] 
-        env_state.obs['privileged_state'] = env_state.obs['privileged_state'].at[:, 17:].set(previleged_obs_info)
-      else:
-        nstate = env.step(env_state, actions, step_key)
+    if use_adv_wrapper:
+      nstate = env.step(env_state, actions, dynamics_params)
+      state_size = nstate.obs['state'].shape[-1]
+      previleged_obs_info = nstate.obs['privileged_state'][:, state_size:]
+      env_state.obs['privileged_state'] = env_state.obs['privileged_state'].at[:, 17:].set(previleged_obs_info)
     else:
       nstate = env.step(env_state, actions)
     q_values = td3_network.q_network.apply(normalizer_params, q_params, env_state.obs, actions).mean(-1)
@@ -484,7 +521,15 @@ def train(
       Metrics,
   ]:
     experience_key, training_key, param_key = jax.random.split(key, 3)
-    dynamics_params = jax.random.uniform(key=param_key, shape=(num_envs//jax.process_count(),len(dr_range_low)), minval=dr_range_low, maxval=dr_range_high)
+    if use_adv_wrapper:
+      dynamics_params = jax.random.uniform(
+          key=param_key,
+          shape=env_state.info["dr_params"].shape,
+          minval=dr_range_low,
+          maxval=dr_range_high,
+      )
+    else:
+      dynamics_params = None
     
     normalizer_params, noise_scales, env_state, buffer_state, simul_info, simul_transitions = get_experience(
         training_state.normalizer_params,
@@ -529,7 +574,15 @@ def train(
       del unused
       training_state, env_state, buffer_state, key = carry
       key, new_key, step_key = jax.random.split(key,3)
-      dynamics_params = jax.random.uniform(key=step_key, shape=(num_envs//jax.process_count(),len(dr_range_low)), minval=dr_range_low, maxval=dr_range_high)
+      if use_adv_wrapper:
+        dynamics_params = jax.random.uniform(
+            key=step_key,
+            shape=env_state.info["dr_params"].shape,
+            minval=dr_range_low,
+            maxval=dr_range_high,
+        )
+      else:
+        dynamics_params = None
       new_normalizer_params, new_noise_scales, env_state, buffer_state, simul_info, simul_transitions = get_experience(
         training_state.normalizer_params,
         training_state.policy_params,
@@ -578,7 +631,7 @@ def train(
           training_state.policy_params,
           training_state.q_params,
           training_state.target_q_params,
-          dynamics_param[None, ...] * jnp.ones((num_envs//jax.process_count(), len(dr_range_low))),
+          dynamics_param[None, ...] * jnp.ones_like(env_state.info["dr_params"]),
           training_state.noise_scales,
           env_state,
           buffer_state,
@@ -685,6 +738,7 @@ def train(
     training_state = training_state.replace(
         normalizer_params=params[0],
         policy_params=params[1],
+        target_policy_params=params[1],
         noise_scales=params[2],
     )
 
@@ -743,7 +797,7 @@ def train(
   logging.info('replay size after prefill %s', replay_size)
   assert replay_size >= min_replay_size
   #evaluation on current occupancy
-  if adv_wrapper:
+  if adv_wrapper and use_adv_wrapper:
     evaluation_key, local_key = jax.random.split(local_key)
     evaluation_key = jax.random.split(evaluation_key, local_devices_to_use)
     target_pdfs = evaluation_on_current_occupancy(
@@ -805,7 +859,7 @@ def train(
       progress_fn(current_step, metrics)
       #evaluation on current occupancy
     evaluation_key = jax.random.split(evaluation_key, local_devices_to_use)
-    if adv_wrapper:
+    if adv_wrapper and use_adv_wrapper:
       target_pdfs = evaluation_on_current_occupancy(
           training_state, env_state, buffer_state, evaluation_key
       )

@@ -1,7 +1,14 @@
-playground==0.0.5
-mujoco==3.4.0
-mujoco-mjx==3.4.0
-brax
+playground==0.2.0
+mujoco>=3.6.0
+mujoco-mjx>=3.6.0
+brax>=0.14.2
+absl-py
+etils
+flax
+jax
+lxml
+ml-collections
+orbax-checkpoint>=0.11.22
 termcolor
 mediapy
 omegaconf
@@ -12,6 +19,7 @@ hydra-core
 numpyro
 mergedeep
 einops
-warp-lang
+warp-lang>=1.11
 pandas
+tqdm
 wandb

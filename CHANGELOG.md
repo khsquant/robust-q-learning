@@ -21,7 +21,6 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - Fixed foot friction randomization for G1 tasks.
-- Fix various bugs in `train_jax_ppo.py` (thanks to @vincentzhang).
 - Fixed a small bug in the privileged state of the go1 joystick task.
 
 ## [0.0.3] - 2025-01-18

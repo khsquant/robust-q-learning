@@ -161,7 +161,7 @@ class PandaRobotiqBase(mjx_env.MjxEnv):
 
   @property
   def xml_path(self) -> str:
-    raise self._xml_path
+    return self._xml_path
 
   @property
   def action_size(self) -> int:

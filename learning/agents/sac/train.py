@@ -38,8 +38,6 @@ from agents.sac import networks as sac_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.envs.base import Wrapper
-from learning.module.wrapper.drhard_wrapper import wrap_for_hard_dr_training
-from learning.module.wrapper.dr_wrapper import wrap_for_dr_training
 from learning.module.wrapper.adv_wrapper import wrap_for_adv_training
 from learning.module.wrapper.wrapper import Wrapper, wrap_for_brax_training
 import flax
@@ -146,6 +144,9 @@ def train(
     randomization_fn: Optional[
         Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
     ] = None,
+    eval_randomization_fn: Optional[
+        Callable[[base.System, jnp.ndarray], Tuple[base.System, base.System]]
+    ] = None,
     checkpoint_logdir: Optional[str] = None,
     restore_checkpoint_path: Optional[str] = None,
     dr_train_ratio = 1.0,
@@ -221,23 +222,15 @@ def train(
           dr_range=training_dr_range,
       )
   if custom_wrapper and randomization_fn is not None:
-    if adv_wrapper:
-      env = wrap_for_adv_training(
-        env,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        randomization_fn=training_randomization_fn,
-      )
-    else:
-      env = wrap_for_dr_training(#wrap_for_training(
-          env,
-          episode_length=episode_length,
-          action_repeat=action_repeat,
-          randomization_fn=training_randomization_fn,
-          n_nominals=1,
-          n_envs=num_envs
-      )  # pytype: disable=wrong-keyword-args
-
+    env = wrap_for_adv_training(
+      env,
+      episode_length=episode_length,
+      action_repeat=action_repeat,
+      randomization_fn=training_randomization_fn,
+      param_size=len(dr_low),
+      dr_range_low=dr_low,
+      dr_range_high=dr_high,
+    )
   else:
     env = wrap_for_brax_training(
       env,
@@ -379,12 +372,17 @@ def train(
       actions, policy_extras = policy(env_state.obs, key)
       # dynamics_params = jax.random.uniform(key=step_key, shape=(num_envs,len(dr_low)), minval=dr_low, maxval=dr_high)
       if randomization_fn is not None and custom_wrapper:
-        if adv_wrapper:
-          dynamics_params = jax.random.uniform(key=step_key, shape=(num_envs,len(dr_low)), minval=dr_low, maxval=dr_high)
-          params = env_state.info["dr_params"] * (1 - env_state.done[..., None]) + dynamics_params * env_state.done[..., None]
-          nstate = env.step(env_state, actions, params)
-        else:
-          nstate = env.step(env_state, actions, step_key)
+        dynamics_params = jax.random.uniform(
+          key=step_key,
+          shape=env_state.info["dr_params"].shape,
+          minval=dr_low,
+          maxval=dr_high,
+        )
+        params = (
+          env_state.info["dr_params"] * (1 - env_state.done[..., None])
+          + dynamics_params * env_state.done[..., None]
+        )
+        nstate = env.step(env_state, actions, params)
       else:
         nstate = env.step(env_state, actions)
       state_extras = {x: nstate.info[x] for x in extra_fields}
@@ -563,13 +561,7 @@ def train(
       env_keys, (local_devices_to_use, -1) + env_keys.shape[1:]
   )
   if randomization_fn is not None and custom_wrapper :
-    if adv_wrapper:
-      local_key, param_key = jax.random.split(local_key)
-      dynamics_params = jax.random.uniform(key=param_key, shape=(num_envs // jax.process_count(),len(dr_low)), minval=dr_low, maxval=dr_high)
-      dynamics_params = jnp.reshape(dynamics_params, (local_devices_to_use, -1) + dynamics_params.shape[1:])
-      env_state = jax.pmap(env.reset)(env_keys, dynamics_params)
-    else:
-      env_state = jax.pmap(env.reset)(env_keys)#, dynamics_params
+    env_state = jax.pmap(env.reset)(env_keys)
   else:
     env_state = jax.pmap(env.reset)(env_keys)
 
@@ -605,9 +597,12 @@ def train(
   import copy
   eval_env = copy.deepcopy(environment)
   v_randomization_fn=None
-  if randomization_fn is not None:
+  evaluation_randomization_fn = eval_randomization_fn or randomization_fn
+  if evaluation_randomization_fn is not None:
     v_randomization_fn = functools.partial(
-        randomization_fn, rng=jax.random.split(eval_key, num_eval_envs), dr_range=env.dr_range if hasattr(env,'dr_range')  else None
+        evaluation_randomization_fn,
+        rng=jax.random.split(eval_key, num_eval_envs),
+        dr_range=env.dr_range if hasattr(env,'dr_range') else None,
     )
 
   eval_env = wrap_for_brax_training(

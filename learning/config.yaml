@@ -13,7 +13,7 @@ eval_pi: true
 eval_value: true # evaluate value function approximation
 eval_freq: 50000
 impl : warp #or mjx
-eval_with_training_env : false #added
+eval_with_training_env : false #used by gmmtd3
 #policy
 policy : td3
 asymmetric_critic: true
@@ -26,6 +26,8 @@ eval_randomization: true
 # logging
 wandb_project: test-algorithms
 wandb_entity: tjrcjf410-seoul-national-university
+wandb_group_prefix: ''
+wandb_group: ''
 wandb_silent: false
 use_wandb: true
 save_csv: true
@@ -56,14 +58,9 @@ bin_size: ???
 # action_repeat: 1
 # normalize_observations: true
 # reward_scale: 1.0
-#rambo
-real_ratio : ???
-rollout_length : ???
-adv_weight : ???
 batch_size : ???
-rollout_batch_size : ???
 
-#wdsac
+#wasserstein q-learning
 n_nominals : ???
 delta : ???
 lambda_update_steps : ???
@@ -73,15 +70,14 @@ init_lmbda : 1.
 distance_type : wass
 custom_wrapper: true
 adv_wrapper : true
-#flow
-flow_lr : ???
 dr_train_ratio : 1.0
 
 #simba
 simba : false
 
-#tdmpc
-horizon: 3
-
 #m2td3
 omega_distance_threshold: 0.1
+
+#TCRMDP
+radius: 0.001
+omniscient_adversary: true

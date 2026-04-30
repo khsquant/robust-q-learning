@@ -23,12 +23,12 @@ from mujoco import mjx
 from mujoco.mjx._src import math
 import numpy as np
 
-from mujoco_playground._src import collision
+from custom_envs import collision
 from mujoco_playground._src import gait
 from custom_envs import mjx_env
-from mujoco_playground._src.collision import geoms_colliding
-from mujoco_playground._src.locomotion.g1 import base as g1_base
-from mujoco_playground._src.locomotion.g1 import g1_constants as consts
+from custom_envs.collision import geoms_colliding
+from custom_envs.locomotion.g1 import base as g1_base
+from custom_envs.locomotion.g1 import g1_constants as consts
 
 
 def default_config() -> config_dict.ConfigDict:

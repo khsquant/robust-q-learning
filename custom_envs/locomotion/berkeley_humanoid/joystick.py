@@ -25,9 +25,9 @@ import numpy as np
 
 from mujoco_playground._src import gait
 from custom_envs import mjx_env
-from mujoco_playground._src.collision import geoms_colliding
-from mujoco_playground._src.locomotion.berkeley_humanoid import base as berkeley_humanoid_base
-from mujoco_playground._src.locomotion.berkeley_humanoid import berkeley_humanoid_constants as consts
+from custom_envs.collision import geoms_colliding
+from custom_envs.locomotion.berkeley_humanoid import base as berkeley_humanoid_base
+from custom_envs.locomotion.berkeley_humanoid import berkeley_humanoid_constants as consts
 
 
 def default_config() -> config_dict.ConfigDict:

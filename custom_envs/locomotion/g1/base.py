@@ -23,7 +23,7 @@ import mujoco
 from mujoco import mjx
 
 from custom_envs import mjx_env
-from mujoco_playground._src.locomotion.g1 import g1_constants as consts
+from custom_envs.locomotion.g1 import g1_constants as consts
 import jax.numpy as jnp
 
 def get_assets() -> Dict[str, bytes]:

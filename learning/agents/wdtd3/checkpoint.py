@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Checkpointing for RAMBO."""
+"""Checkpointing for WDTD3."""
 
 from typing import Any, Union
 
 from brax.training import checkpoint
 from brax.training import types
-from agents.rambo import networks as rambo_networks
+from agents.wdtd3 import networks as wdtd3_networks
 from etils import epath
 from ml_collections import config_dict
 
-_CONFIG_FNAME = 'rambo_network_config.json'
+_CONFIG_FNAME = 'wdtd3_network_config.json'
 
 
 def save(
@@ -38,7 +38,7 @@ def save(
 def load(
     path: Union[str, epath.Path],
 ):
-  """Loads RAMBO checkpoint."""
+  """Loads WDTD3 checkpoint."""
   return checkpoint.load(path)
 
 
@@ -46,7 +46,7 @@ def network_config(
     observation_size: types.ObservationSize,
     action_size: int,
     normalize_observations: bool,
-    network_factory: types.NetworkFactory[rambo_networks.RAMBONetworks],
+    network_factory: types.NetworkFactory[wdtd3_networks.WDTD3Networks],
 ) -> config_dict.ConfigDict:
   """Returns a config dict for re-creating a network from a checkpoint."""
   return checkpoint.network_config(
@@ -56,16 +56,16 @@ def network_config(
 
 def _get_network(
     config: config_dict.ConfigDict,
-    network_factory: types.NetworkFactory[rambo_networks.RAMBONetworks],
-) -> rambo_networks.RAMBONetworks:
-  """Generates a RAMBO network given config."""
+    network_factory: types.NetworkFactory[wdtd3_networks.WDTD3Networks],
+) -> wdtd3_networks.WDTD3Networks:
+  """Generates a WDTD3 network given config."""
   return checkpoint.get_network(config, network_factory)  # pytype: disable=bad-return-type
 
 
 def load_config(
     path: Union[str, epath.Path],
 ) -> config_dict.ConfigDict:
-  """Loads RAMBO config from checkpoint."""
+  """Loads WDTD3 config from checkpoint."""
   path = epath.Path(path)
   config_path = path / _CONFIG_FNAME
   return checkpoint.load_config(config_path)
@@ -74,15 +74,15 @@ def load_config(
 def load_policy(
     path: Union[str, epath.Path],
     network_factory: types.NetworkFactory[
-        rambo_networks.RAMBONetworks
-    ] = rambo_networks.make_rambo_networks,
+        wdtd3_networks.WDTD3Networks
+    ] = wdtd3_networks.make_wdtd3_networks,
     deterministic: bool = True,
 ):
-  """Loads policy inference function from RAMBO checkpoint."""
+  """Loads policy inference function from WDTD3 checkpoint."""
   path = epath.Path(path)
   config = load_config(path)
   params = load(path)
-  rambo_network = _get_network(config, network_factory)
-  make_inference_fn = rambo_networks.make_inference_fn(rambo_network)
+  wdtd3_network = _get_network(config, network_factory)
+  make_inference_fn = wdtd3_networks.make_inference_fn(wdtd3_network)
 
   return make_inference_fn(params, deterministic=deterministic)

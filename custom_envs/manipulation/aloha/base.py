@@ -23,9 +23,9 @@ import mujoco
 from mujoco import mjx
 import numpy as np
 
-from mujoco_playground._src import collision
+from custom_envs import collision
 from custom_envs import mjx_env
-from mujoco_playground._src.manipulation.aloha import aloha_constants as consts
+from custom_envs.manipulation.aloha import aloha_constants as consts
 
 
 def get_assets() -> Dict[str, bytes]:
