@@ -60,7 +60,7 @@ from learning.configs.manipulation_training_config import (
     manipulation_tcrmdp_config,
     manipulation_td3_config,
 )
-from learning.module.wrapper.wrapper import Wrapper, wrap_for_brax_training
+from learning.module.wrapper.wrapper import Wrapper
 from utils import save_configs_to_wandb_and_local
 
 
@@ -206,7 +206,6 @@ def train_sac(cfg, randomization_fn, env, eval_env=None):
     sac_training_params = dict(sac_params)
     wandb_name = (
         f"{cfg.task}.{cfg.policy}.{cfg.seed}.asym={cfg.asymmetric_critic}."
-        f"hard_dr={cfg.custom_wrapper}.adv_wrapper={cfg.adv_wrapper}.simba={cfg.simba}"
     )
     _init_wandb(cfg, wandb_name)
 
@@ -235,9 +234,7 @@ def train_sac(cfg, randomization_fn, env, eval_env=None):
         randomization_fn=_adv_randomizer(cfg.task, randomization_fn),
         eval_randomization_fn=randomization_fn,
         dr_train_ratio=cfg.dr_train_ratio,
-        custom_wrapper=True,
         seed=cfg.seed,
-        adv_wrapper=True,
     )
     return train_fn(environment=env)
 
@@ -292,7 +289,6 @@ def train_wdsac(cfg, randomization_fn, env, eval_env=None):
     return train_fn(
         environment=env,
         eval_env=eval_env,
-        wrap_env_fn=wrap_for_brax_training,
     )
 
 
@@ -302,7 +298,6 @@ def train_td3(cfg, randomization_fn, env, eval_env=None):
     td3_training_params = dict(td3_params)
     wandb_name = (
         f"{cfg.task}.{cfg.policy}.{cfg.seed}.asym={cfg.asymmetric_critic}."
-        f"hard_dr={cfg.custom_wrapper}.adv_wrapper={cfg.adv_wrapper}"
     )
     _init_wandb(cfg, wandb_name)
 
@@ -324,9 +319,7 @@ def train_td3(cfg, randomization_fn, env, eval_env=None):
         randomization_fn=_adv_randomizer(cfg.task, randomization_fn),
         eval_randomization_fn=randomization_fn,
         dr_train_ratio=cfg.dr_train_ratio,
-        custom_wrapper=True,
         seed=cfg.seed,
-        adv_wrapper=True,
         use_wandb=cfg.use_wandb,
     )
     return train_fn(environment=env)
@@ -381,7 +374,6 @@ def train_gmmtd3(cfg, randomization_fn, env, eval_env=None):
 
     wandb_name = (
         f"{cfg.task}.{cfg.policy}.seed={cfg.seed}.asym={cfg.asymmetric_critic}"
-        f".dr_train_ratio={cfg.dr_train_ratio}"
     )
     _init_wandb(cfg, wandb_name)
 
@@ -425,12 +417,10 @@ def train_tcrmdp_algorithm(cfg, randomization_fn, env, algorithm: str, eval_env=
         wandb_name = (
             f"{cfg.task}.{algorithm}.seed={cfg.seed}"
             f".omniscient={params.omniscient_adversary}"
-            f".dr_train_ratio={cfg.dr_train_ratio}"
         )
     else:
         wandb_name = (
             f"{cfg.task}.{algorithm}.seed={cfg.seed}.radius={params.radius}"
-            f".dr_train_ratio={cfg.dr_train_ratio}"
         )
     _init_wandb(cfg, wandb_name)
 
@@ -580,7 +570,7 @@ def train(cfg):
 
     env = registry.load(cfg.task, config=env_cfg)
     randomization_fn = (
-        registry.get_domain_randomizer(cfg.task) if cfg.randomization else None
+        registry.get_domain_randomizer_eval(cfg.task) if cfg.randomization else None
     )
     print("randomization_fn:", randomization_fn)
 

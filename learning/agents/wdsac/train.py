@@ -38,8 +38,9 @@ from module.buffer import DynamicBatchQueue  # noqa: E402
 from agents.wdsac import checkpoint
 from agents.wdsac import losses as wdsac_losses
 from agents.wdsac import networks as wdsac_networks
+from learning.module.wrapper.adv_wrapper import wrap_for_adv_training
 from learning.module.wrapper.drhard_wrapper import wrap_for_hard_dr_training
-from learning.module.wrapper.evaluator import Evaluator
+from learning.module.wrapper.evaluator import AdvEvaluator, Evaluator
 
 Metrics = types.Metrics
 Transition = types.Transition
@@ -77,6 +78,17 @@ class TrainingState:
 
 def _unpmap(v):
   return jax.tree_util.tree_map(lambda x: x[0], v)
+
+
+def _replicate_across_devices(value, local_devices_to_use: int):
+  return jax.device_put(
+      jax.tree_util.tree_map(
+          lambda x: jnp.broadcast_to(
+              jnp.asarray(x), (local_devices_to_use,) + jnp.asarray(x).shape
+          ),
+          value,
+      )
+  )
 
 
 def _init_training_state(
@@ -127,7 +139,7 @@ def _init_training_state(
       lmbda_params=lmbda_params,
       normalizer_params=normalizer_params,
   )
-  return jax.device_put_replicated(ts, jax.local_devices()[:local_devices_to_use])
+  return _replicate_across_devices(ts, local_devices_to_use)
 
 
 def train(
@@ -578,8 +590,10 @@ def train(
   if restore_checkpoint_path is not None:
     params = checkpoint.load(restore_checkpoint_path)
     training_state = training_state.replace(
-        normalizer_params=jax.device_put_replicated(params[0], jax.local_devices()[:local_devices_to_use]),
-        policy_params=jax.device_put_replicated(params[1], jax.local_devices()[:local_devices_to_use]),
+        normalizer_params=_replicate_across_devices(
+            params[0], local_devices_to_use
+        ),
+        policy_params=_replicate_across_devices(params[1], local_devices_to_use),
     )
 
   # === Replay buffer init (per device) ===
@@ -589,31 +603,44 @@ def train(
   if not eval_env:
     eval_env = environment
   if wrap_env:
-    v_randomization_fn_eval = None
-    if eval_randomization_fn is not None:
-      v_randomization_fn_eval = eval_randomization_fn
-    #       if wrap_env_fn is not None:
-    #   wrap_for_training = wrap_env_fn
-    # elif isinstance(env, envs.Env):
-    #   wrap_for_training = envs.training.wrap
-    # else:
-    #   raise ValueError(f'Unsupported environment type: {type(env)}')
-
-    eval_env = wrap_for_training(
-        eval_env,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        randomization_fn=v_randomization_fn_eval,
-    )
-
-  evaluator = Evaluator(
-      eval_env,
-      functools.partial(make_policy, deterministic=deterministic_eval),
-      num_eval_envs=num_eval_envs,
-      episode_length=episode_length,
-      action_repeat=action_repeat,
-      key=eval_key,
-  )
+    if eval_randomization_fn is not None and hasattr(environment, 'dr_range'):
+      eval_dr_low, eval_dr_high = environment.dr_range
+      eval_env = wrap_for_adv_training(
+          eval_env,
+          episode_length=episode_length,
+          action_repeat=action_repeat,
+          randomization_fn=functools.partial(
+              eval_randomization_fn,
+              dr_range=environment.dr_range,
+          ),
+          param_size=len(eval_dr_low),
+          dr_range_low=eval_dr_low,
+          dr_range_high=eval_dr_high,
+      )
+      evaluator = AdvEvaluator(
+          eval_env,
+          functools.partial(make_policy, deterministic=deterministic_eval),
+          num_eval_envs=num_eval_envs,
+          episode_length=episode_length,
+          action_repeat=action_repeat,
+          key=eval_key,
+          dr_range_low=eval_dr_low,
+          dr_range_high=eval_dr_high,
+      )
+    else:
+      eval_env = wrap_for_training(
+          eval_env,
+          episode_length=episode_length,
+          action_repeat=action_repeat,
+      )
+      evaluator = Evaluator(
+          eval_env,
+          functools.partial(make_policy, deterministic=deterministic_eval),
+          num_eval_envs=num_eval_envs,
+          episode_length=episode_length,
+          action_repeat=action_repeat,
+          key=eval_key,
+      )
 
   # Optional initial eval
   metrics = {}

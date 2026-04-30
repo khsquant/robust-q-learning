@@ -37,14 +37,13 @@ from agents.sac import losses as sac_losses
 from agents.sac import networks as sac_networks
 from brax.training.types import Params
 from brax.training.types import PRNGKey
-from brax.envs.base import Wrapper
 from learning.module.wrapper.adv_wrapper import wrap_for_adv_training
-from learning.module.wrapper.wrapper import Wrapper, wrap_for_brax_training
+from learning.module.wrapper.wrapper import Wrapper
 import flax
 import jax
 import jax.numpy as jnp
 import optax
-from learning.module.wrapper.evaluator import Evaluator
+from learning.module.wrapper.evaluator import AdvEvaluator, Evaluator
 
 Metrics = types.Metrics
 Transition = types.Transition
@@ -73,6 +72,17 @@ class TrainingState:
 
 def _unpmap(v):
   return jax.tree_util.tree_map(lambda x: x[0], v)
+
+
+def _replicate_across_devices(value, local_devices_to_use: int):
+  return jax.device_put(
+      jax.tree_util.tree_map(
+          lambda x: jnp.broadcast_to(
+              jnp.asarray(x), (local_devices_to_use,) + jnp.asarray(x).shape
+          ),
+          value,
+      )
+  )
 
 
 def _init_training_state(
@@ -111,9 +121,7 @@ def _init_training_state(
       alpha_params=log_alpha,
       normalizer_params=normalizer_params,
   )
-  return jax.device_put_replicated(
-      training_state, jax.local_devices()[:local_devices_to_use]
-  )
+  return _replicate_across_devices(training_state, local_devices_to_use)
 
 
 def train(
@@ -150,8 +158,6 @@ def train(
     checkpoint_logdir: Optional[str] = None,
     restore_checkpoint_path: Optional[str] = None,
     dr_train_ratio = 1.0,
-    custom_wrapper=True,
-    adv_wrapper=True,
 ):
   """SAC training."""
   process_id = jax.process_index()
@@ -196,6 +202,7 @@ def train(
 
   rng = jax.random.PRNGKey(seed)
   rng, key = jax.random.split(rng)
+  evaluation_randomization_fn = eval_randomization_fn or randomization_fn
   if hasattr(env,'dr_range') :
     dr_low, dr_high = env.dr_range
     dr_mid = (dr_low + dr_high) / 2.
@@ -205,23 +212,14 @@ def train(
     training_dr_range = None
   training_randomization_fn = None
   if randomization_fn is not None:
-    if custom_wrapper:
-      training_randomization_fn = functools.partial(
-          randomization_fn,
-          # rng=jax.random.split(
-          #     key, num_envs // jax.process_count() // local_devices_to_use
-          # ),
-          dr_range=training_dr_range,
+    if training_dr_range is None:
+      raise ValueError(
+          'SAC domain randomization requires an environment with dr_range.'
       )
-    else:
-      training_randomization_fn = functools.partial(
-          randomization_fn,
-          rng=jax.random.split(
-              key, num_envs // jax.process_count() // local_devices_to_use
-          ),
-          dr_range=training_dr_range,
-      )
-  if custom_wrapper and randomization_fn is not None:
+    training_randomization_fn = functools.partial(
+        randomization_fn,
+        dr_range=training_dr_range,
+    )
     env = wrap_for_adv_training(
       env,
       episode_length=episode_length,
@@ -232,11 +230,10 @@ def train(
       dr_range_high=dr_high,
     )
   else:
-    env = wrap_for_brax_training(
-      env,
+    env = envs.training.wrap(
+        env,
         episode_length=episode_length,
         action_repeat=action_repeat,
-        randomization_fn=training_randomization_fn,
     )
   obs_shape = env.observation_size
 #   if isinstance(obs_size, Dict):
@@ -371,7 +368,7 @@ def train(
       step_key, key = jax.random.split(key)
       actions, policy_extras = policy(env_state.obs, key)
       # dynamics_params = jax.random.uniform(key=step_key, shape=(num_envs,len(dr_low)), minval=dr_low, maxval=dr_high)
-      if randomization_fn is not None and custom_wrapper:
+      if randomization_fn is not None:
         dynamics_params = jax.random.uniform(
           key=step_key,
           shape=env_state.info["dr_params"].shape,
@@ -560,10 +557,7 @@ def train(
   env_keys = jnp.reshape(
       env_keys, (local_devices_to_use, -1) + env_keys.shape[1:]
   )
-  if randomization_fn is not None and custom_wrapper :
-    env_state = jax.pmap(env.reset)(env_keys)
-  else:
-    env_state = jax.pmap(env.reset)(env_keys)
+  env_state = jax.pmap(env.reset)(env_keys)
 
   obs_shape = jax.tree_util.tree_map(
       lambda x: specs.Array(x.shape[-1:], jnp.dtype('float32')), env_state.obs
@@ -584,8 +578,10 @@ def train(
   if restore_checkpoint_path is not None:
     params = checkpoint.load(restore_checkpoint_path)
     training_state = training_state.replace(
-        normalizer_params=params[0],
-        policy_params=params[1],
+        normalizer_params=_replicate_across_devices(
+            params[0], local_devices_to_use
+        ),
+        policy_params=_replicate_across_devices(params[1], local_devices_to_use),
     )
 
 
@@ -596,30 +592,44 @@ def train(
   )
   import copy
   eval_env = copy.deepcopy(environment)
-  v_randomization_fn=None
-  evaluation_randomization_fn = eval_randomization_fn or randomization_fn
-  if evaluation_randomization_fn is not None:
-    v_randomization_fn = functools.partial(
-        evaluation_randomization_fn,
-        rng=jax.random.split(eval_key, num_eval_envs),
-        dr_range=env.dr_range if hasattr(env,'dr_range') else None,
+  if evaluation_randomization_fn is not None and hasattr(environment, 'dr_range'):
+    eval_dr_low, eval_dr_high = environment.dr_range
+    eval_env = wrap_for_adv_training(
+        eval_env,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        randomization_fn=functools.partial(
+            evaluation_randomization_fn,
+            dr_range=environment.dr_range,
+        ),
+        param_size=len(eval_dr_low),
+        dr_range_low=eval_dr_low,
+        dr_range_high=eval_dr_high,
     )
-
-  eval_env = wrap_for_brax_training(
-      eval_env,
-      episode_length=episode_length,
-      action_repeat=action_repeat,
-      randomization_fn=v_randomization_fn,
-  )  # pytype: disable=wrong-keyword-args
-
-  evaluator = Evaluator(
-      eval_env,
-      functools.partial(make_policy, deterministic=deterministic_eval),
-      num_eval_envs=num_eval_envs,
-      episode_length=episode_length,
-      action_repeat=action_repeat,
-      key=eval_key,
-  )
+    evaluator = AdvEvaluator(
+        eval_env,
+        functools.partial(make_policy, deterministic=deterministic_eval),
+        num_eval_envs=num_eval_envs,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        key=eval_key,
+        dr_range_low=eval_dr_low,
+        dr_range_high=eval_dr_high,
+    )
+  else:
+    eval_env = envs.training.wrap(
+        eval_env,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+    )
+    evaluator = Evaluator(
+        eval_env,
+        functools.partial(make_policy, deterministic=deterministic_eval),
+        num_eval_envs=num_eval_envs,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        key=eval_key,
+    )
 
   # Run initial eval
   metrics = {}

@@ -28,19 +28,20 @@ SEEDS="${SEEDS:-1 2 3 4 5}"
 ASYMMETRIC_CRITICS="${ASYMMETRIC_CRITICS:-true false}"
 WANDB_PROJECT="${WANDB_PROJECT:-qlearning-5seed-sweeps}"
 WANDB_GROUP_PREFIX="${WANDB_GROUP_PREFIX:-}"
-USE_WANDB="${USE_WANDB:-false}"
+USE_WANDB="${USE_WANDB:-true}"
 SAVE_VIDEO="${SAVE_VIDEO:-false}"
 SAVE_AGENT="${SAVE_AGENT:-true}"
-CONDA_ENV="${CONDA_ENV:-robust_rl}"
+CONDA_ENV="${CONDA_ENV:-rob-q}"
 USE_CONDA_RUN="${USE_CONDA_RUN:-true}"
+CONDA_NO_CAPTURE_OUTPUT="${CONDA_NO_CAPTURE_OUTPUT:-true}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
+UNSET_LD_LIBRARY_PATH="${UNSET_LD_LIBRARY_PATH:-true}"
 DRY_RUN="${DRY_RUN:-false}"
 SMOKE="${SMOKE:-false}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-false}"
 EXTRA_OVERRIDES="${EXTRA_OVERRIDES:-}"
 
 DEFAULT_POLICIES=(
-  sac
   td3
   m2td3
   rarl
@@ -78,7 +79,12 @@ fi
 
 _python_cmd() {
   if [[ "${USE_CONDA_RUN}" == "true" ]]; then
-    printf '%s\n' conda run -n "${CONDA_ENV}" python run.py
+    local cmd=(conda run -n "${CONDA_ENV}")
+    if [[ "${CONDA_NO_CAPTURE_OUTPUT}" == "true" ]]; then
+      cmd+=(--no-capture-output)
+    fi
+    cmd+=(python run.py)
+    printf '%s\n' "${cmd[@]}"
   else
     printf '%s\n' "${PYTHON_BIN}" run.py
   fi
@@ -114,10 +120,16 @@ run_case() {
 
     for seed in ${SEEDS}; do
       mapfile -t base_cmd < <(_python_cmd)
-      local cmd=(
-        env
+      local env_cmd=(env)
+      if [[ "${UNSET_LD_LIBRARY_PATH}" == "true" ]]; then
+        env_cmd+=(-u LD_LIBRARY_PATH)
+      fi
+      env_cmd+=(
         "CUDA_VISIBLE_DEVICES=${GPU_ID}"
         "XLA_PYTHON_CLIENT_PREALLOCATE=false"
+      )
+      local cmd=(
+        "${env_cmd[@]}"
         "${base_cmd[@]}"
         "policy=${policy}"
         "seed=${seed}"
@@ -148,11 +160,11 @@ run_case() {
 run_policy_sweep() {
   local policy="$1"
   case "${policy}" in
-    sac)
-      run_case sac sac_lr1e-4 "learning_rate-1e-4" "++learning_rate=1e-4"
-      run_case sac sac_lr3e-4 "learning_rate-3e-4" "++learning_rate=3e-4"
-      run_case sac sac_lr1e-3 "learning_rate-1e-3" "++learning_rate=1e-3"
-      ;;
+    # sac)
+      # run_case sac sac_lr1e-4 "learning_rate-1e-4" "++learning_rate=1e-4"
+      # run_case sac sac_lr3e-4 "learning_rate-3e-4" "++learning_rate=3e-4"
+      # run_case sac sac_lr1e-3 "learning_rate-1e-3" "++learning_rate=1e-3"
+      # ;;
     td3)
       run_case td3 td3_fixed_explore010 "std_min-0_1_std_max-0_1_policy_noise-0_1_noise_clip-0_5_policy_frequency-2" \
         "++std_min=0.1" "++std_max=0.1" "++policy_noise=0.1" "++noise_clip=0.5" "++policy_frequency=2"

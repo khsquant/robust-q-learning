@@ -33,8 +33,7 @@ from agents.tcrmdp import common
 from agents.tcrmdp import losses as tcrmdp_losses
 from agents.tcrmdp import networks as tcrmdp_networks
 from learning.module.wrapper.adv_wrapper import wrap_for_adv_training
-from learning.module.wrapper.evaluator import Evaluator
-from learning.module.wrapper.wrapper import wrap_for_brax_training
+from learning.module.wrapper.evaluator import AdvEvaluator, Evaluator
 
 
 ReplayBufferState = Any
@@ -866,28 +865,45 @@ def train(
   )
 
   eval_env = copy.deepcopy(environment)
-  evaluation_randomization_fn = eval_randomization_fn
-  v_randomization_fn = None
+  evaluation_randomization_fn = eval_randomization_fn or randomization_fn
   if evaluation_randomization_fn is not None:
-    v_randomization_fn = functools.partial(
-        evaluation_randomization_fn,
-        rng=jax.random.split(eval_key, num_eval_envs),
-        dr_range=environment.dr_range,
+    eval_dr_low, eval_dr_high = environment.dr_range
+    eval_env = wrap_for_adv_training(
+        eval_env,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        randomization_fn=functools.partial(
+            evaluation_randomization_fn,
+            dr_range=environment.dr_range,
+        ),
+        param_size=len(eval_dr_low),
+        dr_range_low=eval_dr_low,
+        dr_range_high=eval_dr_high,
     )
-  eval_env = wrap_for_brax_training(
-      eval_env,
-      episode_length=episode_length,
-      action_repeat=action_repeat,
-      randomization_fn=v_randomization_fn,
-  )
-  evaluator = Evaluator(
-      eval_env,
-      functools.partial(make_policy, deterministic=True),
-      num_eval_envs=num_eval_envs,
-      episode_length=episode_length,
-      action_repeat=action_repeat,
-      key=eval_key,
-  )
+    evaluator = AdvEvaluator(
+        eval_env,
+        functools.partial(make_policy, deterministic=True),
+        num_eval_envs=num_eval_envs,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        key=eval_key,
+        dr_range_low=eval_dr_low,
+        dr_range_high=eval_dr_high,
+    )
+  else:
+    eval_env = envs.training.wrap(
+        eval_env,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+    )
+    evaluator = Evaluator(
+        eval_env,
+        functools.partial(make_policy, deterministic=True),
+        num_eval_envs=num_eval_envs,
+        episode_length=episode_length,
+        action_repeat=action_repeat,
+        key=eval_key,
+    )
 
   metrics = {}
   if process_id == 0 and num_evals > 1:

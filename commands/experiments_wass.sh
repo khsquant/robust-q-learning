@@ -4,15 +4,15 @@ use_wandb=true
 task="CheetahRun"
 for seed in 1 2 3
 do 
-    CUDA_VISIBLE_DEVICES=$gpu_id python train.py policy="td3" wandb_project=$wandb_project custom_wrapper=false adv_wrapper=false asymmetric_critic=false task=$task seed=$seed use_wandb=$use_wandb
+    CUDA_VISIBLE_DEVICES=$gpu_id python train.py policy="td3" wandb_project=$wandb_project asymmetric_critic=false task=$task seed=$seed use_wandb=$use_wandb
 done 
 for seed in 1 2 3
 do 
-    CUDA_VISIBLE_DEVICES=$gpu_id python train.py policy="td3" wandb_project=$wandb_project custom_wrapper=true adv_wrapper=true asymmetric_critic=false task=$task seed=$seed use_wandb=$use_wandb
+    CUDA_VISIBLE_DEVICES=$gpu_id python train.py policy="td3" wandb_project=$wandb_project asymmetric_critic=false task=$task seed=$seed use_wandb=$use_wandb
 done 
 for seed in 1 2 3
 do 
-    CUDA_VISIBLE_DEVICES=$gpu_id python train.py policy="td3" wandb_project=$wandb_project custom_wrapper=true adv_wrapper=false asymmetric_critic=false task=$task seed=$seed use_wandb=$use_wandb
+    CUDA_VISIBLE_DEVICES=$gpu_id python train.py policy="td3" wandb_project=$wandb_project asymmetric_critic=false task=$task seed=$seed use_wandb=$use_wandb
 done 
 for seed in 1 2 3
 do
@@ -39,7 +39,7 @@ do
 done
 for seed in 1 2 3
 do 
-    CUDA_VISIBLE_DEVICES=$gpu_id python train.py policy="td3" wandb_project=$wandb_project custom_wrapper=false adv_wrapper=false asymmetric_critic=true task=$task seed=$seed use_wandb=$use_wandb
+    CUDA_VISIBLE_DEVICES=$gpu_id python train.py policy="td3" wandb_project=$wandb_project asymmetric_critic=true task=$task seed=$seed use_wandb=$use_wandb
 done 
 # for seed in 1 2 3
 # do

@@ -68,8 +68,6 @@ single_lambda : false
 lmbda_lr : ???
 init_lmbda : 1.
 distance_type : wass
-custom_wrapper: true
-adv_wrapper : true
 dr_train_ratio : 1.0
 
 #simba

@@ -38,9 +38,10 @@ from module.buffer import DynamicBatchQueue  # noqa: E402
 from agents.wdtd3 import checkpoint
 from agents.wdtd3 import losses as wdtd3_losses
 from agents.wdtd3 import networks as wdtd3_networks
+from learning.module.wrapper.adv_wrapper import wrap_for_adv_training
 from learning.module.wrapper.drhard_wrapper import wrap_for_hard_dr_training
-from learning.module.wrapper.wrapper import Wrapper, wrap_for_brax_training
-from learning.module.wrapper.evaluator import Evaluator
+from learning.module.wrapper.wrapper import Wrapper
+from learning.module.wrapper.evaluator import AdvEvaluator, Evaluator
 
 Metrics = types.Metrics
 Transition = types.Transition
@@ -78,6 +79,17 @@ class TrainingState:
 
 def _unpmap(v):
   return jax.tree_util.tree_map(lambda x: x[0], v)
+
+
+def _replicate_across_devices(value, local_devices_to_use: int):
+  return jax.device_put(
+      jax.tree_util.tree_map(
+          lambda x: jnp.broadcast_to(
+              jnp.asarray(x), (local_devices_to_use,) + jnp.asarray(x).shape
+          ),
+          value,
+      )
+  )
 
 
 def _init_training_state(
@@ -128,7 +140,7 @@ def _init_training_state(
       noise_scales= jax.random.normal(key_noise,\
          (num_envs // jax.process_count() // local_devices_to_use, )) *(std_max - std_min) + std_min,
   )
-  return jax.device_put_replicated(ts, jax.local_devices()[:local_devices_to_use])
+  return _replicate_across_devices(ts, local_devices_to_use)
 
 
 def train(
@@ -587,8 +599,10 @@ def train(
   if restore_checkpoint_path is not None:
     params = checkpoint.load(restore_checkpoint_path)
     training_state = training_state.replace(
-        normalizer_params=jax.device_put_replicated(params[0], jax.local_devices()[:local_devices_to_use]),
-        policy_params=jax.device_put_replicated(params[1], jax.local_devices()[:local_devices_to_use]),
+        normalizer_params=_replicate_across_devices(
+            params[0], local_devices_to_use
+        ),
+        policy_params=_replicate_across_devices(params[1], local_devices_to_use),
     )
 
   # === Replay buffer init (per device) ===
@@ -596,30 +610,29 @@ def train(
 
   # === Evaluator ===
   eval_env = copy.deepcopy(environment)
-  v_randomization_fn_eval = functools.partial(
-      randomization_fn, rng=jax.random.split(eval_key, num_eval_envs), dr_range=env.dr_range
-  )
-  #       if wrap_env_fn is not None:
-  #   wrap_for_training = wrap_env_fn
-  # elif isinstance(env, envs.Env):
-  #   wrap_for_training = envs.training.wrap
-  # else:
-  #   raise ValueError(f'Unsupported environment type: {type(env)}')
-
-  eval_env = wrap_for_brax_training(
+  eval_dr_low, eval_dr_high = environment.dr_range
+  eval_env = wrap_for_adv_training(
       eval_env,
       episode_length=episode_length,
       action_repeat=action_repeat,
-      randomization_fn=v_randomization_fn_eval,
+      randomization_fn=functools.partial(
+          randomization_fn,
+          dr_range=environment.dr_range,
+      ),
+      param_size=len(eval_dr_low),
+      dr_range_low=eval_dr_low,
+      dr_range_high=eval_dr_high,
   )
 
-  evaluator = Evaluator(
+  evaluator = AdvEvaluator(
       eval_env,
       functools.partial(make_policy, deterministic=True),
       num_eval_envs=num_eval_envs,
       episode_length=episode_length,
       action_repeat=action_repeat,
       key=eval_key,
+      dr_range_low=eval_dr_low,
+      dr_range_high=eval_dr_high,
   )
 
   # Optional initial eval

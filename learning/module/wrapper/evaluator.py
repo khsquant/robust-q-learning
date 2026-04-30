@@ -11,6 +11,22 @@ import scipy
 import numpy as np
 from flax import struct
 from brax import envs
+
+
+def sample_dynamics_params(
+    key: jax.Array,
+    num_envs: int,
+    dr_range_low: jnp.ndarray,
+    dr_range_high: jnp.ndarray,
+) -> jnp.ndarray:
+  return jax.random.uniform(
+      key,
+      shape=(num_envs, len(dr_range_low)),
+      minval=dr_range_low,
+      maxval=dr_range_high,
+  )
+
+
 @struct.dataclass
 class EvalMetrics:
   """Dataclass holding evaluation metrics for Brax.
@@ -311,7 +327,12 @@ class Evaluator:
     #       for name, value in eval_metrics.episode_metrics.items()
     #   })
     metrics['eval/episode_reward_mean'] = np.mean(eval_metrics.episode_metrics['reward'])
+    metrics['eval/episode_reward_p5'] = np.percentile(eval_metrics.episode_metrics['reward'],5)
+    metrics['eval/episode_reward_p10'] = np.percentile(eval_metrics.episode_metrics['reward'],10)
+    metrics['eval/episode_reward_p15'] = np.percentile(eval_metrics.episode_metrics['reward'],15)
+    metrics['eval/episode_reward_p20'] = np.percentile(eval_metrics.episode_metrics['reward'],20)
     metrics['eval/episode_reward_p25'] = np.percentile(eval_metrics.episode_metrics['reward'],25)
+    metrics['eval/episode_reward_p50'] = np.percentile(eval_metrics.episode_metrics['reward'],50)
     metrics['eval/episode_reward_p75'] = np.percentile(eval_metrics.episode_metrics['reward'],75)
     metrics['eval/episode_reward_std'] = np.std(eval_metrics.episode_metrics['reward'])
     metrics['eval/episode_reward_min'] = np.min(eval_metrics.episode_metrics['reward'])
@@ -341,6 +362,9 @@ class AdvEvaluator:
       episode_length: int,
       action_repeat: int,
       key: PRNGKey,
+      dr_range_low: Optional[jnp.ndarray] = None,
+      dr_range_high: Optional[jnp.ndarray] = None,
+      num_eval_seeds: int = 1,
       use_mpc: bool = False,
       dummy_plan:jnp.ndarray = jnp.zeros(1),
   ):
@@ -356,6 +380,10 @@ class AdvEvaluator:
     """
     self._key = key
     self._eval_walltime = 0.0
+    self._num_eval_envs = num_eval_envs
+    self._dr_range_low = dr_range_low
+    self._dr_range_high = dr_range_high
+    self._num_eval_seeds = num_eval_seeds
 
     eval_env = AdvEvalWrapper(eval_env)
 
@@ -381,13 +409,37 @@ class AdvEvaluator:
   def run_evaluation(
       self,
       policy_params: PolicyParams,
-      dynamics_params : jnp.ndarray,
-      training_metrics: Metrics,
+      dynamics_params: Optional[jnp.ndarray] = None,
+      training_metrics: Optional[Metrics] = None,
       aggregate_episodes: bool = True,
-      num_eval_seeds: int = 1,
+      num_eval_seeds: Optional[int] = None,
+      return_reward_array: bool = False,
   ) -> Metrics:
     """Run one epoch of evaluation."""
-    self._key, unroll_key = jax.random.split(self._key)
+    if training_metrics is None and isinstance(dynamics_params, dict):
+      training_metrics = dynamics_params
+      dynamics_params = None
+    if training_metrics is None:
+      training_metrics = {}
+    if num_eval_seeds is None:
+      num_eval_seeds = self._num_eval_seeds
+
+    if dynamics_params is None:
+      if self._dr_range_low is None or self._dr_range_high is None:
+        raise ValueError(
+            'AdvEvaluator needs dr_range_low/high when dynamics_params are not'
+            ' provided.'
+        )
+      self._key, params_key, unroll_key = jax.random.split(self._key, 3)
+      dynamics_params = sample_dynamics_params(
+          params_key,
+          self._num_eval_envs,
+          self._dr_range_low,
+          self._dr_range_high,
+      )
+    else:
+      self._key, unroll_key = jax.random.split(self._key)
+
     unroll_keys = jax.random.split(unroll_key, num_eval_seeds)
     t = time.time()
     def f(carry, key):
@@ -412,7 +464,12 @@ class AdvEvaluator:
     #       for name, value in eval_metrics.episode_metrics.items()
     #   })
     metrics['eval/episode_reward_mean'] = np.mean(eval_metrics.episode_metrics['reward'])
+    metrics['eval/episode_reward_p5'] = np.percentile(eval_metrics.episode_metrics['reward'],5)
+    metrics['eval/episode_reward_p10'] = np.percentile(eval_metrics.episode_metrics['reward'],10)
+    metrics['eval/episode_reward_p15'] = np.percentile(eval_metrics.episode_metrics['reward'],15)
+    metrics['eval/episode_reward_p20'] = np.percentile(eval_metrics.episode_metrics['reward'],20)
     metrics['eval/episode_reward_p25'] = np.percentile(eval_metrics.episode_metrics['reward'],25)
+    metrics['eval/episode_reward_p50'] = np.percentile(eval_metrics.episode_metrics['reward'],50)
     metrics['eval/episode_reward_p75'] = np.percentile(eval_metrics.episode_metrics['reward'],75)
     metrics['eval/episode_reward_std'] = np.std(eval_metrics.episode_metrics['reward'])
     metrics['eval/episode_reward_min'] = np.min(eval_metrics.episode_metrics['reward'])
@@ -429,4 +486,6 @@ class AdvEvaluator:
         **metrics,
     }
 
-    return metrics, reward_2d   # pytype: disable=bad-return-type  # jax-ndarray
+    if return_reward_array:
+      return metrics, reward_2d  # pytype: disable=bad-return-type  # jax-ndarray
+    return metrics  # pytype: disable=bad-return-type  # jax-ndarray

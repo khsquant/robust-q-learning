@@ -55,7 +55,7 @@ from flax.core import FrozenDict
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.tri as mtri
-from learning.module.wrapper.wrapper import Wrapper, wrap_for_brax_training
+from learning.module.wrapper.wrapper import Wrapper
 from matplotlib.ticker import MaxNLocator
 Metrics = types.Metrics
 InferenceParams = Tuple[running_statistics.NestedMeanStd, Params]
@@ -95,6 +95,8 @@ class TransitionwithGMMParams(NamedTuple):
   target_lnpdf: jax.Array
   target_lnpdf_grad: jax.Array
   extras: FrozenDict[str, Any]  # recommended
+
+
 @flax.struct.dataclass
 class TrainingState:
   """Contains training state for the learner."""
@@ -112,6 +114,17 @@ class TrainingState:
 
 def _unpmap(v):
   return jax.tree_util.tree_map(lambda x: x[0], v)
+
+
+def _replicate_across_devices(value, local_devices_to_use: int):
+  return jax.device_put(
+      jax.tree_util.tree_map(
+          lambda x: jnp.broadcast_to(
+              jnp.asarray(x), (local_devices_to_use,) + jnp.asarray(x).shape
+          ),
+          value,
+      )
+  )
 
 
 def _init_training_state(
@@ -150,9 +163,7 @@ def _init_training_state(
       gmm_training_state=gmm_init_state,
       noise_scales= jax.random.normal(key_noise, (num_envs, )) *(std_max - std_min) + std_min,
   )
-  return jax.device_put_replicated(
-      training_state, jax.local_devices()[:local_devices_to_use]
-  )
+  return _replicate_across_devices(training_state, local_devices_to_use)
 
 
 def train(
@@ -701,7 +712,7 @@ def train(
     return training_state, env_state, buffer_state, metrics  # pytype: disable=bad-return-type  # py311-upgrade
   global_key, local_key = jax.random.split(rng)
   local_key = jax.random.fold_in(local_key, process_id)
-  local_key, rb_key, env_key, param_key, eval_key, randomization_key = jax.random.split(local_key, 6)
+  local_key, rb_key, env_key, param_key, eval_key = jax.random.split(local_key, 5)
 
     # Env init
   env_keys = jax.random.split(env_key, num_envs // jax.process_count())
@@ -733,9 +744,11 @@ def train(
   if restore_checkpoint_path is not None:
     params = checkpoint.load(restore_checkpoint_path)
     training_state = training_state.replace(
-        normalizer_params=params[0],
-        policy_params=params[1],
-        noise_scales=params[2],
+        normalizer_params=_replicate_across_devices(
+            params[0], local_devices_to_use
+        ),
+        policy_params=_replicate_across_devices(params[1], local_devices_to_use),
+        noise_scales=_replicate_across_devices(params[2], local_devices_to_use),
     )
 
 
@@ -746,14 +759,15 @@ def train(
 
   eval_env = copy.deepcopy(environment)
   if eval_with_training_env:
+    eval_dr_low, eval_dr_high = training_dr_range
     eval_env = wrap_for_adv_training(
       eval_env,
       episode_length=episode_length,
       action_repeat=action_repeat,
       randomization_fn=functools.partial(randomization_fn, dr_range=training_dr_range),
       param_size=dynamics_param_size,
-      dr_range_low=dr_range_low,
-      dr_range_high=dr_range_high,
+      dr_range_low=eval_dr_low,
+      dr_range_high=eval_dr_high,
     )
     evaluator = AdvEvaluator(
         eval_env,
@@ -762,26 +776,34 @@ def train(
         episode_length=episode_length,
         action_repeat=action_repeat,
         key=eval_key,
+        dr_range_low=eval_dr_low,
+        dr_range_high=eval_dr_high,
     )
   else:
-    v_randomization_fn=functools.partial(eval_randomization_fn,
-      rng=jax.random.split(randomization_key, num_eval_envs // jax.process_count()//local_devices_to_use), dr_range=env.dr_range
-    )
-
-    eval_env = wrap_for_brax_training(
+    evaluation_randomization_fn = eval_randomization_fn or randomization_fn
+    eval_dr_low, eval_dr_high = environment.dr_range
+    eval_env = wrap_for_adv_training(
         eval_env,
         episode_length=episode_length,
         action_repeat=action_repeat,
-        randomization_fn=v_randomization_fn,
-    )  # pytype: disable=wrong-keyword-args
+        randomization_fn=functools.partial(
+            evaluation_randomization_fn,
+            dr_range=environment.dr_range,
+        ),
+        param_size=len(eval_dr_low),
+        dr_range_low=eval_dr_low,
+        dr_range_high=eval_dr_high,
+    )
 
-    evaluator = Evaluator(
+    evaluator = AdvEvaluator(
         eval_env,
         functools.partial(make_policy, deterministic=True),
         num_eval_envs=num_eval_envs,
         episode_length=episode_length,
         action_repeat=action_repeat,
         key=eval_key,
+        dr_range_low=eval_dr_low,
+        dr_range_high=eval_dr_high,
     )
   ed = time.time()
   print("setup time", ed-st)
