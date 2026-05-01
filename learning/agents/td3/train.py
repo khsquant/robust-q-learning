@@ -77,7 +77,6 @@ class TrainingState:
 
   policy_optimizer_state: optax.OptState
   policy_params: Params
-  target_policy_params: Params
   q_optimizer_state: optax.OptState
   q_params: Params
   target_q_params: Params
@@ -135,7 +134,6 @@ def _init_training_state(
   training_state = TrainingState(
       policy_optimizer_state=policy_optimizer_state,
       policy_params=policy_params,
-      target_policy_params=policy_params,
       q_optimizer_state=q_optimizer_state,
       q_params=q_params,
       target_q_params=q_params,
@@ -334,7 +332,7 @@ def train(
     if distributional_q:
       (critic_loss, (current_q, next_v)), q_params, q_optimizer_state = critic_update(
           training_state.q_params,
-          training_state.target_policy_params,
+          training_state.policy_params,
           training_state.normalizer_params,
           training_state.target_q_params,
           transitions,
@@ -346,7 +344,7 @@ def train(
     else:
       (critic_loss, (current_q, next_v)), q_params, q_optimizer_state = critic_update(
           training_state.q_params,
-          training_state.target_policy_params,
+          training_state.policy_params,
           training_state.normalizer_params,
           training_state.target_q_params,
           transitions,
@@ -372,15 +370,11 @@ def train(
           optimizer_state=training_state.policy_optimizer_state,
       )
       new_target_q_params = polyak_update(training_state.target_q_params, q_params)
-      new_target_policy_params = polyak_update(
-          training_state.target_policy_params, policy_params
-      )
       return (
           actor_loss,
           policy_params,
           policy_optimizer_state,
           new_target_q_params,
-          new_target_policy_params,
       )
 
     def skip_actor_and_targets(_):
@@ -389,7 +383,6 @@ def train(
           training_state.policy_params,
           training_state.policy_optimizer_state,
           training_state.target_q_params,
-          training_state.target_policy_params,
       )
 
     new_gradient_steps = training_state.gradient_steps + 1
@@ -399,7 +392,6 @@ def train(
         policy_params,
         policy_optimizer_state,
         new_target_q_params,
-        new_target_policy_params,
     ) = jax.lax.cond(
         should_update_actor,
         update_actor_and_targets,
@@ -422,7 +414,6 @@ def train(
     new_training_state = TrainingState(
         policy_optimizer_state=policy_optimizer_state,
         policy_params=policy_params,
-        target_policy_params=new_target_policy_params,
         q_optimizer_state=q_optimizer_state,
         q_params=q_params,
         target_q_params=new_target_q_params,
@@ -745,9 +736,6 @@ def train(
             params[0], local_devices_to_use
         ),
         policy_params=_replicate_across_devices(params[1], local_devices_to_use),
-        target_policy_params=_replicate_across_devices(
-            params[1], local_devices_to_use
-        ),
         noise_scales=_replicate_across_devices(params[2], local_devices_to_use),
     )
 

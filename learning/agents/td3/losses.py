@@ -42,7 +42,7 @@ def make_losses(
     if distributional_q:
         def critic_loss(
             q_params: Params,
-            target_policy_params: Params,
+            policy_params: Params,
             normalizer_params: Any,
             target_q_params: Params,
             transitions: Transition,
@@ -60,7 +60,7 @@ def make_losses(
                 normalizer_params, q_params, transitions.observation, transitions.action #[B, A, N]
             )
             next_action = policy_network.apply(
-                normalizer_params, target_policy_params, transitions.next_observation
+                normalizer_params, policy_params, transitions.next_observation
             )
             next_action = jnp.clip(next_action + noise, -1.0, 1.0)
 
@@ -82,7 +82,7 @@ def make_losses(
     else:
         def critic_loss(
             q_params: Params,
-            target_policy_params: Params,
+            policy_params: Params,
             normalizer_params: Any,
             target_q_params: Params,
             transitions: Transition,
@@ -93,7 +93,7 @@ def make_losses(
                 normalizer_params, q_params, transitions.observation, transitions.action
             )
             next_action = policy_network.apply(
-                normalizer_params, target_policy_params, transitions.next_observation
+                normalizer_params, policy_params, transitions.next_observation
             )
             next_action = jnp.clip(next_action + noise, -1.0, 1.0)
             next_q = q_network.apply(

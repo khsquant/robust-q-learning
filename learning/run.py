@@ -1,4 +1,6 @@
 import functools
+import hashlib
+import inspect
 import os
 import pickle
 import shutil
@@ -100,6 +102,27 @@ CAMERAS = {
     "LeapCubeReorient": "side",
 }
 
+_WANDB_GROUP_LIMIT = 120
+_WANDB_GROUP_HASH_LENGTH = 8
+
+
+def _limit_wandb_group(group: str) -> str:
+    """Keep W&B group names within the API limit while retaining uniqueness."""
+    group = str(group)
+    if len(group) <= _WANDB_GROUP_LIMIT:
+        return group
+
+    digest = hashlib.sha1(group.encode("utf-8")).hexdigest()[
+        :_WANDB_GROUP_HASH_LENGTH
+    ]
+    suffix = f".{digest}"
+    limited_group = group[: _WANDB_GROUP_LIMIT - len(suffix)] + suffix
+    print(
+        "Truncated wandb_group from "
+        f"{len(group)} to {len(limited_group)} chars: {limited_group}"
+    )
+    return limited_group
+
 
 class BraxDomainRandomizationWrapper(Wrapper):
     """Brax wrapper for domain randomized evaluation."""
@@ -139,6 +162,20 @@ def _maybe_override_config(params, cfg):
                 params[param] = value
 
 
+def _filter_kwargs(callable_fn, kwargs):
+    signature = inspect.signature(callable_fn)
+    if any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in signature.parameters.values()
+    ):
+        return dict(kwargs)
+    return {
+        key: value
+        for key, value in dict(kwargs).items()
+        if key in signature.parameters
+    }
+
+
 def _init_wandb(cfg, name: str):
     if cfg.use_wandb:
         if cfg.wandb_group:
@@ -148,6 +185,9 @@ def _init_wandb(cfg, name: str):
             if cfg.wandb_group_prefix:
                 group_parts.insert(0, cfg.wandb_group_prefix)
             group = ".".join(str(part) for part in group_parts if part)
+        group = _limit_wandb_group(group)
+        wandb_config = OmegaConf.to_container(cfg, resolve=True)
+        wandb_config["wandb_group"] = group
         wandb.init(
             project=cfg.wandb_project,
             entity=cfg.wandb_entity,
@@ -161,7 +201,7 @@ def _init_wandb(cfg, name: str):
                 f"exp_name:{cfg.exp_name}",
             ],
             dir=make_dir(cfg.work_dir),
-            config=OmegaConf.to_container(cfg, resolve=True),
+            config=wandb_config,
         )
         wandb.config.update({"env_name": cfg.task, "wandb_group": group})
 
@@ -348,8 +388,12 @@ def train_m2td3(cfg, randomization_fn, env, eval_env=None):
             m2td3_params.network_factory.value_obs_key = "state"
         network_factory = functools.partial(
             m2td3_networks.make_m2td3_networks,
-            **m2td3_params.network_factory,
+            **_filter_kwargs(
+                m2td3_networks.make_m2td3_networks,
+                m2td3_params.network_factory,
+            ),
         )
+    m2td3_training_params = _filter_kwargs(m2td3.train, m2td3_training_params)
 
     train_fn = functools.partial(
         m2td3.train,
