@@ -241,33 +241,25 @@ def train(
   else:
     training_dr_range = None
   training_randomization_fn = None
-  use_dr = randomization_fn is not None
 
-  if use_dr:
-    if training_dr_range is None:
-      raise ValueError(
-          'TD3 domain randomization requires an environment with dr_range.'
-      )
-    training_randomization_fn = functools.partial(
-          randomization_fn,
-          dr_range=training_dr_range,
-      )
-    env = wrap_for_adv_training(
-      env,
-      episode_length=episode_length,
-      action_repeat=action_repeat,
-      randomization_fn=training_randomization_fn,
-      param_size=len(dr_range_low),
-      dr_range_low=dr_range_low,
-      dr_range_high=dr_range_high,
+  if training_dr_range is None:
+    raise ValueError(
+        'TD3 domain randomization requires an environment with dr_range.'
     )
+  training_randomization_fn = functools.partial(
+        randomization_fn,
+        dr_range=training_dr_range,
+    )
+  env = wrap_for_adv_training(
+    env,
+    episode_length=episode_length,
+    action_repeat=action_repeat,
+    randomization_fn=training_randomization_fn,
+    param_size=len(dr_range_low),
+    dr_range_low=dr_range_low,
+    dr_range_high=dr_range_high,
+  )
 
-  else:
-    env = envs.training.wrap(
-        env,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-    )
 
   obs_shape = env.observation_size
 #   if isinstance(obs_size, Dict):
@@ -437,13 +429,12 @@ def train(
   ):
     step_key, key = jax.random.split(key)
     actions, policy_extras = policy(env_state.obs, noise_scales, key)
-    if use_dr:
-      nstate = env.step(env_state, actions, dynamics_params)
-      state_size = nstate.obs['state'].shape[-1]
-      previleged_obs_info = nstate.obs['privileged_state'][:, state_size:]
-      env_state.obs['privileged_state'] = env_state.obs['privileged_state'].at[:, 17:].set(previleged_obs_info)
-    else:
-      nstate = env.step(env_state, actions)
+    nstate = env.step(env_state, actions, dynamics_params)
+    state_size = nstate.obs["state"].shape[-1]
+    privileged_obs_info = nstate.obs["privileged_state"][:, state_size:]
+    env_state.obs["privileged_state"] = env_state.obs["privileged_state"].at[
+        :, state_size:
+    ].set(privileged_obs_info)
     q_values = td3_network.q_network.apply(normalizer_params, q_params, env_state.obs, actions).mean(-1)
     target_lnpdfs = jax.nn.log_softmax(-q_values, -1)
     state_extras = {x: nstate.info[x] for x in extra_fields}
@@ -517,15 +508,12 @@ def train(
       Metrics,
   ]:
     experience_key, training_key, param_key = jax.random.split(key, 3)
-    if use_dr:
-      dynamics_params = jax.random.uniform(
-          key=param_key,
-          shape=env_state.info["dr_params"].shape,
-          minval=dr_range_low,
-          maxval=dr_range_high,
-      )
-    else:
-      dynamics_params = None
+    dynamics_params = jax.random.uniform(
+        key=param_key,
+        shape=env_state.info["dr_params"].shape,
+        minval=dr_range_low,
+        maxval=dr_range_high,
+    )
     
     normalizer_params, noise_scales, env_state, buffer_state, simul_info, simul_transitions = get_experience(
         training_state.normalizer_params,
@@ -570,15 +558,12 @@ def train(
       del unused
       training_state, env_state, buffer_state, key = carry
       key, new_key, step_key = jax.random.split(key,3)
-      if use_dr:
-        dynamics_params = jax.random.uniform(
-            key=step_key,
-            shape=env_state.info["dr_params"].shape,
-            minval=dr_range_low,
-            maxval=dr_range_high,
-        )
-      else:
-        dynamics_params = None
+      dynamics_params = jax.random.uniform(
+          key=step_key,
+          shape=env_state.info["dr_params"].shape,
+          minval=dr_range_low,
+          maxval=dr_range_high,
+      )
       new_normalizer_params, new_noise_scales, env_state, buffer_state, simul_info, simul_transitions = get_experience(
         training_state.normalizer_params,
         training_state.policy_params,
@@ -811,7 +796,7 @@ def train(
   logging.info('replay size after prefill %s', replay_size)
   assert replay_size >= min_replay_size
   #evaluation on current occupancy
-  if use_dr and len(dr_range_low)==2:
+  if  len(dr_range_low)==2:
     evaluation_key, local_key = jax.random.split(local_key)
     evaluation_key = jax.random.split(evaluation_key, local_devices_to_use)
     target_pdfs = evaluation_on_current_occupancy(
@@ -873,7 +858,7 @@ def train(
       progress_fn(current_step, metrics)
       #evaluation on current occupancy
     evaluation_key = jax.random.split(evaluation_key, local_devices_to_use)
-    if use_dr and len(dr_range_low)==2:
+    if len(dr_range_low)==2:
       target_pdfs = evaluation_on_current_occupancy(
           training_state, env_state, buffer_state, evaluation_key
       )

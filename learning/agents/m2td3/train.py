@@ -492,6 +492,12 @@ def train(
     actions, policy_extras = policy(env_state.obs, noise_scales, key)
     # dynamics_params = jax.random.uniform(key=step_key, shape=(num_envs,len(dr_range_low)), minval=dr_range_low, maxval=dr_range_high)
     nstate = env.step(env_state, actions, dynamics_params)
+    if isinstance(env_state.obs, dict) and "privileged_state" in env_state.obs:
+      state_size = nstate.obs["state"].shape[-1]
+      privileged_obs_info = nstate.obs["privileged_state"][:, state_size:]
+      env_state.obs["privileged_state"] = env_state.obs["privileged_state"].at[
+          :, state_size:
+      ].set(privileged_obs_info)
     state_extras = {x: nstate.info[x] for x in extra_fields}
     return nstate, TransitionwithParams(  # pytype: disable=wrong-arg-types  # jax-ndarray
         observation=env_state.obs,
