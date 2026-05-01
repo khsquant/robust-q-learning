@@ -101,20 +101,22 @@ def make_losses(
     action = policy_network.apply(
         normalizer_params, policy_params, transitions.observation
     )
-    def f(i, unused_t):
-        q_action = q_network.apply(
-            normalizer_params, q_params, transitions.observation, action, omega_params[:,i]
-        )[..., 0]
-        return i+1, (q_action)
-    _, qs = jax.lax.scan(
-        f,
-        0,
-        (),
-        length=omega_params.shape[1],
-    )
-    min_q = jnp.min(qs, axis=0)
-    min_idx = jnp.argmin(qs,axis=0)
-    return jnp.mean(min_q), min_idx
+    batch_size = transitions.action.shape[0]
+
+    def q1_for_omega(omega):
+      omega_batch = jnp.broadcast_to(omega, (batch_size, omega.shape[-1]))
+      q_action = q_network.apply(
+          normalizer_params,
+          q_params,
+          transitions.observation,
+          action,
+          omega_batch,
+      )
+      return q_action[..., 0].mean()
+
+    q1_values = jax.vmap(q1_for_omega)(omega_params)
+    worst_idx = jnp.argmin(q1_values)
+    return q1_values[worst_idx], (worst_idx, -q1_values[worst_idx])
   
   def actor_loss(
       policy_params: Params,
@@ -127,6 +129,11 @@ def make_losses(
     action = policy_network.apply(
         normalizer_params, policy_params, transitions.observation
     )
+    if dynamics_params.ndim == 1:
+      dynamics_params = jnp.broadcast_to(
+          dynamics_params,
+          (action.shape[0], dynamics_params.shape[-1]),
+      )
     q_action = q_network.apply(
         normalizer_params, q_params, transitions.observation, action, dynamics_params,
     )

@@ -76,6 +76,8 @@ class TrainingState:
   target_q_params: Params
   omega_optimizer_state: optax.OptState
   omega_params: Params
+  omega_prob: jnp.ndarray
+  active_omega: jnp.ndarray
   gradient_steps: types.UInt64
   env_steps: types.UInt64
   normalizer_params: running_statistics.RunningStatisticsState
@@ -122,9 +124,22 @@ def _init_training_state(
     num_omegas: int = 5,
 ) -> TrainingState:
   """Inits the training state and replicates it over devices."""
-  key_policy, key_q, key_noise, key_omega = jax.random.split(key, 4)
-  omega_params = jax.random.uniform(key_omega, shape=(per_replica_batch, num_omegas, param_dim),
-                                    minval=dr_range_low, maxval=dr_range_high)
+  key_policy, key_q, key_noise, key_omega, key_active_omega = jax.random.split(key, 5)
+  del per_replica_batch
+  per_device_envs = num_envs // local_devices_to_use // jax.process_count()
+  omega_params = jax.random.uniform(
+      key_omega,
+      shape=(num_omegas, param_dim),
+      minval=dr_range_low,
+      maxval=dr_range_high,
+  )
+  omega_prob = jnp.ones((num_omegas,), dtype=jnp.float32) / num_omegas
+  active_omega = jax.random.uniform(
+      key_active_omega,
+      shape=(per_device_envs, param_dim),
+      minval=dr_range_low,
+      maxval=dr_range_high,
+  )
   
   omega_optimizer_state = omega_optimizer.init(omega_params)
 
@@ -147,6 +162,8 @@ def _init_training_state(
       env_steps=types.UInt64(hi=0, lo=0),
       omega_optimizer_state=omega_optimizer_state,
       omega_params=omega_params,
+      omega_prob=omega_prob,
+      active_omega=active_omega,
       normalizer_params=normalizer_params,
       noise_scales= jax.random.normal(key_noise, (num_envs//local_devices_to_use//jax.process_count(), )) *(std_max - std_min) + std_min,
   )
@@ -195,6 +212,10 @@ def train(
     num_omegas : int = 5,
     omega_distance_threshold: float = 0.1,
     omega_lr: Optional[float] = None,
+    omega_min_probability: float = 5e-2,
+    omega_prob_update_rate: Optional[float] = None,
+    omega_restart_distance: bool = True,
+    omega_restart_probability: bool = True,
     policy_frequency: int = 2,
 ):
   """m2td3 training."""
@@ -250,6 +271,11 @@ def train(
   else:
     raise ValueError("Environment does not have dr_range attribute. Please provide a valid environment with dr_range.")
   training_randomization_fn = None
+  omega_prob_update_rate = (
+      1.0 / max(episode_length, 1)
+      if omega_prob_update_rate is None
+      else omega_prob_update_rate
+  )
   env = wrap_for_adv_training(
       env,
       episode_length=episode_length,
@@ -326,7 +352,6 @@ def train(
     training_state, key = carry
 
     key, key_critic, key_actor, key_omega, key_noise = jax.random.split(key, 5)
-    batch_size = transitions.action.shape[0]
     noise = jax.random.normal(key_noise, shape=transitions.action.shape) * policy_noise
     noise = jnp.clip(noise,-noise_clip, noise_clip)
     (critic_loss, (current_q, next_v)), q_params, q_optimizer_state = critic_update(
@@ -355,7 +380,10 @@ def train(
       )
 
     def update_actor_omega_and_targets(_):
-      (omega_loss, min_idx), omega_params, omega_optimizer_state = omega_update(
+      (
+          omega_loss,
+          (worst_omega_idx, worst_policy_loss),
+      ), omega_params, omega_optimizer_state = omega_update(
           training_state.omega_params,
           training_state.policy_params,
           training_state.normalizer_params,
@@ -365,9 +393,7 @@ def train(
           optimizer_state=training_state.omega_optimizer_state,
       )
       omega_params = jnp.clip(omega_params, dr_range_low, dr_range_high)
-      actor_dynamics_params = training_state.omega_params[
-          jnp.arange(batch_size), min_idx
-      ]
+      actor_dynamics_params = training_state.omega_params[worst_omega_idx]
       actor_loss, policy_params, policy_optimizer_state = actor_update(
           training_state.policy_params,
           training_state.normalizer_params,
@@ -377,14 +403,17 @@ def train(
           key_actor,
           optimizer_state=training_state.policy_optimizer_state,
       )
+      omega_prob = update_omega_prob(training_state.omega_prob, worst_omega_idx)
       new_target_q_params = polyak_update(training_state.target_q_params, q_params)
       return (
           actor_loss,
           omega_loss,
+          worst_policy_loss,
           policy_params,
           policy_optimizer_state,
           omega_params,
           omega_optimizer_state,
+          omega_prob,
           new_target_q_params,
       )
 
@@ -392,20 +421,24 @@ def train(
       return (
           jnp.zeros_like(critic_loss),
           jnp.zeros_like(critic_loss),
+          jnp.zeros_like(critic_loss),
           training_state.policy_params,
           training_state.policy_optimizer_state,
           training_state.omega_params,
           training_state.omega_optimizer_state,
+          training_state.omega_prob,
           training_state.target_q_params,
       )
 
     (
         actor_loss,
         omega_loss,
+        worst_policy_loss,
         policy_params,
         policy_optimizer_state,
         omega_params,
         omega_optimizer_state,
+        omega_prob,
         new_target_q_params,
     ) = jax.lax.cond(
         should_update_actor,
@@ -419,6 +452,7 @@ def train(
         'actor_loss': actor_loss,
         'actor_updated': should_update_actor.astype(jnp.float32),
         'omega_loss': omega_loss,
+        'omega_worst_policy_loss': worst_policy_loss,
         'current_q_min' : current_q.min(),
         'current_q_max' : current_q.max(),
         'current_q_mean' : current_q.mean(),
@@ -435,6 +469,8 @@ def train(
         target_q_params=new_target_q_params,
         omega_optimizer_state=omega_optimizer_state,
         omega_params=omega_params,
+        omega_prob=omega_prob,
+        active_omega=training_state.active_omega,
         gradient_steps=new_gradient_steps,
         env_steps=training_state.env_steps,
         normalizer_params=training_state.normalizer_params,
@@ -504,33 +540,93 @@ def train(
     }
     buffer_state = replay_buffer.insert(buffer_state, transitions)
     return normalizer_params, noise_scales, env_state, buffer_state, simul_info
-  def resample_params(
-     dynamics_params,
-     key, 
-  ):
-    B, K, D = dynamics_params.shape
-    assert K == num_omegas and D == len(dr_range_low)
+  def normalize_omega_prob(omega_prob):
+    omega_prob = jnp.maximum(omega_prob, 0.0)
+    total = jnp.sum(omega_prob)
+    safe_total = jnp.maximum(total, 1e-8)
+    uniform = jnp.ones_like(omega_prob) / omega_prob.shape[0]
+    return jnp.where(total > 0, omega_prob / safe_total, uniform)
 
-    x = dynamics_params  # (B,K,D)
+  def restart_omegas(omega_params, omega_prob, key):
+    if num_omegas <= 1:
+      return (
+          omega_params,
+          jnp.ones_like(omega_prob),
+          jnp.array(0.0, dtype=jnp.float32),
+          jnp.array(0.0, dtype=jnp.float32),
+      )
 
-    # Pairwise L1 distances: (B,K,K)
-    # broadcast subtract across the K dimension
-    l1 = jnp.sum(jnp.abs(x[:, :, None, :] - x[:, None, :, :]), axis=-1)
+    distance_mask = jnp.zeros((num_omegas,), dtype=bool)
+    if omega_restart_distance:
+      l1 = jnp.sum(
+          jnp.abs(omega_params[:, None, :] - omega_params[None, :, :]),
+          axis=-1,
+      )
+      close_upper = jnp.triu(
+          (l1 <= omega_distance_threshold),
+          k=1,
+      )
+      distance_mask = jnp.any(close_upper, axis=1)
 
-    # mark pairs below threshold, excluding diagonal
-    eye = jnp.eye(K, dtype=bool)
-    bad_pair = (l1 < omega_distance_threshold) & (~eye)  # (B,K,K)
+    omega_prob = normalize_omega_prob(omega_prob)
+    probability_mask = jnp.zeros((num_omegas,), dtype=bool)
+    if omega_restart_probability:
+      probability_mask = omega_prob < omega_min_probability
 
-    # for each index k, flag if it appears in ANY bad pair
-    # (row or column — symmetric, but 'or' is safe)
-    resample_mask_idx = jnp.any(bad_pair, axis=2) | jnp.any(bad_pair, axis=1)  # (B,K)
+    restart_mask = distance_mask | probability_mask
+    new_omega_params = jax.random.uniform(
+        key,
+        omega_params.shape,
+        minval=dr_range_low,
+        maxval=dr_range_high,
+    )
+    omega_params = jnp.where(restart_mask[:, None], new_omega_params, omega_params)
 
-    # draw replacement params for ALL slots, then select where needed
-    new_vals = jax.random.uniform(key, (B, K, D), minval=dr_range_low, maxval=dr_range_high)  # e.g., Normal(0,1). Customize if needed.
+    restart_count = jnp.sum(restart_mask)
+    kept_count = num_omegas - restart_count
+    kept_mass = jnp.sum(jnp.where(restart_mask, 0.0, omega_prob))
+    replacement_prob = jnp.where(
+        kept_count > 0,
+        kept_mass / jnp.maximum(kept_count, 1),
+        1.0 / num_omegas,
+    )
+    omega_prob = jnp.where(restart_mask, replacement_prob, omega_prob)
+    omega_prob = normalize_omega_prob(omega_prob)
+    return (
+        omega_params,
+        omega_prob,
+        jnp.sum(distance_mask).astype(jnp.float32),
+        jnp.sum(probability_mask).astype(jnp.float32),
+    )
 
-    new_params = jnp.where(resample_mask_idx[..., None], new_vals, x)
+  def update_omega_prob(omega_prob, selected_idx):
+    if num_omegas <= 1:
+      return jnp.ones_like(omega_prob)
+    one_hot = jax.nn.one_hot(selected_idx, num_omegas, dtype=omega_prob.dtype)
+    omega_prob = (
+        omega_prob * (1.0 - omega_prob_update_rate)
+        + omega_prob_update_rate * one_hot
+    )
+    return normalize_omega_prob(omega_prob)
 
-    return new_params, resample_mask_idx
+  def sample_omega_batch(omega_params, omega_prob, key, noise_key, batch_count):
+    omega_prob = normalize_omega_prob(omega_prob)
+    selected_idx = jax.random.choice(
+        key,
+        num_omegas,
+        shape=(batch_count,),
+        p=omega_prob,
+    )
+    dynamics_params = omega_params[selected_idx]
+    dynamics_params = dynamics_params + (
+        omega_std
+        * (dr_range_high - dr_range_low)
+        / 2.0
+        * jax.random.normal(noise_key, dynamics_params.shape)
+    )
+    dynamics_params = jnp.clip(dynamics_params, dr_range_low, dr_range_high)
+    return dynamics_params, selected_idx
+
   def training_step(
       training_state: TrainingState,
       env_state: envs.State,
@@ -542,19 +638,10 @@ def train(
       ReplayBufferState,
       Metrics,
   ]:
-    B, K, D = training_state.omega_params.shape
-    experience_key, training_key, omega_key1, omega_key2, omega_key3, omega_key4, param_key = jax.random.split(key,7)
-    omega_params, _ = resample_params(training_state.omega_params, omega_key1)
-    dynamics_params = jax.random.choice(omega_key2, omega_params, axis=1)
-    dynamics_params = dynamics_params.reshape(batch_size//num_envs, -1, D) 
-    dynamics_params = jax.random.choice(omega_key3, dynamics_params, axis=0)
-    dynamics_params += (
-        omega_std
-        * (dr_range_high - dr_range_low)
-        / 2.0
-        * jax.random.normal(omega_key4, dynamics_params.shape)
+    experience_key, training_key, restart_key, sample_key, sample_noise_key = (
+        jax.random.split(key, 5)
     )
-    dynamics_params = jnp.clip(dynamics_params, dr_range_low, dr_range_high)
+    dynamics_params = training_state.active_omega
     normalizer_params, noise_scales, env_state, buffer_state, simul_info = get_experience(
         training_state.normalizer_params,
         training_state.policy_params,
@@ -564,12 +651,7 @@ def train(
         buffer_state,
         experience_key,
     )
-    # omega_params = jax.random.uniform(
-    #   param_key, shape=(B, K, D),
-    #     minval=dr_range_low, maxval=dr_range_high
-    #   )
     training_state = training_state.replace(
-        omega_params = omega_params,
         normalizer_params=normalizer_params,
         noise_scales = noise_scales,
         env_steps=training_state.env_steps + env_steps_per_actor_step,
@@ -585,8 +667,51 @@ def train(
     (training_state, _), metrics = jax.lax.scan(
         sgd_step, (training_state, training_key), transitions
     )
+    done_mask = env_state.done.astype(bool)
+    has_done = jnp.any(done_mask)
+
+    def restart_for_done(_):
+      return restart_omegas(
+          training_state.omega_params,
+          training_state.omega_prob,
+          restart_key,
+      )
+
+    def skip_restart(_):
+      return (
+          training_state.omega_params,
+          normalize_omega_prob(training_state.omega_prob),
+          jnp.array(0.0, dtype=jnp.float32),
+          jnp.array(0.0, dtype=jnp.float32),
+      )
+
+    omega_params, omega_prob, distance_restarts, probability_restarts = jax.lax.cond(
+        has_done,
+        restart_for_done,
+        skip_restart,
+        operand=None,
+    )
+    sampled_omega, sampled_idx = sample_omega_batch(
+        omega_params,
+        omega_prob,
+        sample_key,
+        sample_noise_key,
+        training_state.active_omega.shape[0],
+    )
+    active_omega = jnp.where(done_mask[:, None], sampled_omega, training_state.active_omega)
+    training_state = training_state.replace(
+        omega_params=omega_params,
+        omega_prob=omega_prob,
+        active_omega=active_omega,
+    )
 
     metrics['buffer_current_size'] = replay_buffer.size(buffer_state)
+    metrics['omega_prob_min'] = omega_prob.min()
+    metrics['omega_prob_max'] = omega_prob.max()
+    metrics['omega_distance_restarts'] = distance_restarts
+    metrics['omega_probability_restarts'] = probability_restarts
+    metrics['omega_resampled_envs'] = done_mask.sum().astype(jnp.float32)
+    metrics['omega_sampled_idx_mean'] = sampled_idx.astype(jnp.float32).mean()
     metrics.update(simul_info)
     return training_state, env_state, buffer_state, metrics
 
