@@ -194,6 +194,7 @@ def train(
     omega_clip : float = 0.5,
     num_omegas : int = 5,
     omega_distance_threshold: float = 0.1,
+    omega_lr: Optional[float] = None,
     policy_frequency: int = 2,
 ):
   """m2td3 training."""
@@ -280,7 +281,9 @@ def train(
 
   policy_optimizer = optax.adam(learning_rate=learning_rate)
   q_optimizer = optax.adam(learning_rate=learning_rate)
-  omega_optimizer = optax.adam(learning_rate=learning_rate)
+  omega_optimizer = optax.adam(
+      learning_rate=learning_rate if omega_lr is None else omega_lr
+  )
 
   dummy_obs = { key: jnp.zeros(obs_shape[key]) for key in obs_shape } if isinstance(obs_shape, dict) else jnp.zeros((obs_shape,))
   print("dummy_obs", dummy_obs)
@@ -322,7 +325,7 @@ def train(
   ) -> Tuple[Tuple[TrainingState, PRNGKey], Metrics]:
     training_state, key = carry
 
-    key, key_critic, key_actor,key_noise = jax.random.split(key, 4)
+    key, key_critic, key_actor, key_omega, key_noise = jax.random.split(key, 5)
     batch_size = transitions.action.shape[0]
     noise = jax.random.normal(key_noise, shape=transitions.action.shape) * policy_noise
     noise = jnp.clip(noise,-noise_clip, noise_clip)
@@ -341,56 +344,74 @@ def train(
         optimizer_state=training_state.q_optimizer_state,
     )
 
-    def update_actor(dynamics_params):
-      return actor_update(
+    new_gradient_steps = training_state.gradient_steps + 1
+    should_update_actor = _uint64_mod(new_gradient_steps, policy_frequency) == 0
+
+    def polyak_update(target_params, params):
+      return jax.tree_util.tree_map(
+          lambda x, y: x * (1 - tau) + y * tau,
+          target_params,
+          params,
+      )
+
+    def update_actor_omega_and_targets(_):
+      (omega_loss, min_idx), omega_params, omega_optimizer_state = omega_update(
+          training_state.omega_params,
           training_state.policy_params,
           training_state.normalizer_params,
-          training_state.q_params,
-          dynamics_params,
+          q_params,
+          transitions,
+          key_omega,
+          optimizer_state=training_state.omega_optimizer_state,
+      )
+      omega_params = jnp.clip(omega_params, dr_range_low, dr_range_high)
+      actor_dynamics_params = training_state.omega_params[
+          jnp.arange(batch_size), min_idx
+      ]
+      actor_loss, policy_params, policy_optimizer_state = actor_update(
+          training_state.policy_params,
+          training_state.normalizer_params,
+          q_params,
+          actor_dynamics_params,
           transitions,
           key_actor,
           optimizer_state=training_state.policy_optimizer_state,
       )
-
-    (omega_loss, min_idx), omega_params, omega_optimizer_state = omega_update(
-        training_state.omega_params,
-        training_state.policy_params,
-        training_state.normalizer_params,
-        training_state.q_params,
-        transitions,
-        None,
-        optimizer_state=training_state.omega_optimizer_state,
-    )
-    print("min idx shape", training_state.omega_params[jnp.arange(batch_size), min_idx].shape)
-    actor_dynamics_params = training_state.omega_params[jnp.arange(batch_size), min_idx]
-
-    new_gradient_steps = training_state.gradient_steps + 1
-    should_update_actor = _uint64_mod(new_gradient_steps, policy_frequency) == 0
-
-    def update_actor_for_cond(_):
-      actor_loss, policy_params, policy_optimizer_state = update_actor(
-          actor_dynamics_params
-      )
-      return actor_loss, policy_params, policy_optimizer_state
-
-    def skip_actor_for_cond(_):
+      new_target_q_params = polyak_update(training_state.target_q_params, q_params)
       return (
+          actor_loss,
+          omega_loss,
+          policy_params,
+          policy_optimizer_state,
+          omega_params,
+          omega_optimizer_state,
+          new_target_q_params,
+      )
+
+    def skip_actor_omega_and_targets(_):
+      return (
+          jnp.zeros_like(critic_loss),
           jnp.zeros_like(critic_loss),
           training_state.policy_params,
           training_state.policy_optimizer_state,
+          training_state.omega_params,
+          training_state.omega_optimizer_state,
+          training_state.target_q_params,
       )
 
-    actor_loss, policy_params, policy_optimizer_state = jax.lax.cond(
+    (
+        actor_loss,
+        omega_loss,
+        policy_params,
+        policy_optimizer_state,
+        omega_params,
+        omega_optimizer_state,
+        new_target_q_params,
+    ) = jax.lax.cond(
         should_update_actor,
-        update_actor_for_cond,
-        skip_actor_for_cond,
+        update_actor_omega_and_targets,
+        skip_actor_omega_and_targets,
         operand=None,
-    )
-
-    new_target_q_params = jax.tree_util.tree_map(
-        lambda x, y: x * (1 - tau) + y * tau,
-        training_state.target_q_params,
-        q_params,
     )
 
     metrics = {
@@ -508,7 +529,6 @@ def train(
     new_vals = jax.random.uniform(key, (B, K, D), minval=dr_range_low, maxval=dr_range_high)  # e.g., Normal(0,1). Customize if needed.
 
     new_params = jnp.where(resample_mask_idx[..., None], new_vals, x)
-    print("omega params in 2 ", new_params)
 
     return new_params, resample_mask_idx
   def training_step(
@@ -524,16 +544,17 @@ def train(
   ]:
     B, K, D = training_state.omega_params.shape
     experience_key, training_key, omega_key1, omega_key2, omega_key3, omega_key4, param_key = jax.random.split(key,7)
-    print("omega params in 1 ", training_state.omega_params)
     omega_params, _ = resample_params(training_state.omega_params, omega_key1)
-    print("omge params in training_step", omega_params.shape)
     dynamics_params = jax.random.choice(omega_key2, omega_params, axis=1)
     dynamics_params = dynamics_params.reshape(batch_size//num_envs, -1, D) 
     dynamics_params = jax.random.choice(omega_key3, dynamics_params, axis=0)
-    print("omega params in 3 ", dynamics_params)
-    dynamics_params += omega_std * jax.random.normal(omega_key4)
+    dynamics_params += (
+        omega_std
+        * (dr_range_high - dr_range_low)
+        / 2.0
+        * jax.random.normal(omega_key4, dynamics_params.shape)
+    )
     dynamics_params = jnp.clip(dynamics_params, dr_range_low, dr_range_high)
-    print("omega params in 4 ", dynamics_params)
     normalizer_params, noise_scales, env_state, buffer_state, simul_info = get_experience(
         training_state.normalizer_params,
         training_state.policy_params,

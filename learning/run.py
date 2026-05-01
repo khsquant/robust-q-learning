@@ -372,6 +372,7 @@ def train_m2td3(cfg, randomization_fn, env, eval_env=None):
     m2td3_params.omega_std = 1.0
     m2td3_params.omega_clip = 0.5
     m2td3_params.num_omegas = 5
+    m2td3_params.omega_lr = None
     _maybe_override_config(m2td3_params, cfg)
 
     wandb_name = (

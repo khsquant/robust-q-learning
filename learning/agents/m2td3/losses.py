@@ -56,8 +56,14 @@ def make_losses(
     q_old_action = q_network.apply(
         normalizer_params, q_params, transitions.observation, transitions.action, transitions.dynamics_params
     )
-    omega_noise = 0.2* omega_noise_rate * (dr_high-dr_low)
-    param_noise = jnp.clip(jax.random.normal(key, shape=transitions.dynamics_params.shape) * omega_noise[None, ...], -omega_clip, omega_clip)
+    omega_noise = omega_noise_rate * (dr_high - dr_low) / 2.0
+    omega_noise_clip = omega_clip * (dr_high - dr_low) / 2.0
+    param_noise = jnp.clip(
+        jax.random.normal(key, shape=transitions.dynamics_params.shape)
+        * omega_noise[None, ...],
+        -omega_noise_clip[None, ...],
+        omega_noise_clip[None, ...],
+    )
     next_params = jnp.clip(transitions.dynamics_params + param_noise, dr_low, dr_high)
     next_action = policy_network.apply(
         normalizer_params, policy_params, transitions.next_observation, 
@@ -98,19 +104,16 @@ def make_losses(
     def f(i, unused_t):
         q_action = q_network.apply(
             normalizer_params, q_params, transitions.observation, action, omega_params[:,i]
-        ).mean(axis=-1)
+        )[..., 0]
         return i+1, (q_action)
-    idx = jnp.arange(omega_params.shape[1])
     _, qs = jax.lax.scan(
         f,
         0,
         (),
         length=omega_params.shape[1],
     )
-    print("qs shape", qs)
     min_q = jnp.min(qs, axis=0)
     min_idx = jnp.argmin(qs,axis=0)
-    print("min idx shape", min_idx)
     return jnp.mean(min_q), min_idx
   
   def actor_loss(
@@ -124,11 +127,9 @@ def make_losses(
     action = policy_network.apply(
         normalizer_params, policy_params, transitions.observation
     )
-    print("dynamics_params in actor loss", dynamics_params)
     q_action = q_network.apply(
         normalizer_params, q_params, transitions.observation, action, dynamics_params,
     )
-    min_q = jnp.min(q_action, axis=-1)
-    return -jnp.mean(min_q)
+    return -jnp.mean(q_action[..., 0])
 
   return critic_loss, actor_loss, omega_loss
