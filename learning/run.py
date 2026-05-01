@@ -1,6 +1,7 @@
 import functools
 import hashlib
 import inspect
+import json
 import os
 import pickle
 import shutil
@@ -143,9 +144,43 @@ class BraxDomainRandomizationWrapper(Wrapper):
         return self.env.step(state, action)
 
 
+def _to_jsonable_metric(value):
+    try:
+        value = jax.device_get(value)
+    except Exception:
+        pass
+    if isinstance(value, np.generic):
+        return value.item()
+    try:
+        array_value = np.asarray(value)
+        if array_value.shape == ():
+            return array_value.item()
+        return array_value.tolist()
+    except Exception:
+        return str(value)
+
+
+def _append_metrics_jsonl(num_steps, metrics):
+    metrics_path = os.environ.get("METRICS_JSONL")
+    if not metrics_path:
+        return
+    metrics_dir = os.path.dirname(metrics_path)
+    if metrics_dir:
+        os.makedirs(metrics_dir, exist_ok=True)
+    row = {
+        "num_steps": int(num_steps),
+        "num_update_steps": int(num_steps // 8),
+    }
+    for key, value in metrics.items():
+        row[key] = _to_jsonable_metric(value)
+    with open(metrics_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, sort_keys=True) + "\n")
+
+
 def progress_fn(num_steps, metrics, use_wandb=True):
     if use_wandb:
         wandb.log(metrics, step=num_steps)
+    _append_metrics_jsonl(num_steps, metrics)
     print("-------------------------------------------------------------------")
     print(f"num_steps: {num_steps}")
     print(f"num_update_steps: {num_steps // 8}")

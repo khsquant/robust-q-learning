@@ -37,6 +37,9 @@ DRY_RUN="${DRY_RUN:-false}"
 SMOKE="${SMOKE:-false}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-false}"
 EXTRA_OVERRIDES="${EXTRA_OVERRIDES:-}"
+SWEEP_RUN_ID="${SWEEP_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
+SWEEP_LOG_ROOT="${SWEEP_LOG_ROOT:-${REPO_ROOT}/logs/sweeps/m2td3_omega_selection}"
+RUN_LOG_ROOT="${SWEEP_LOG_ROOT}/${SWEEP_RUN_ID}"
 
 # one_factor: baseline plus one-at-a-time sweeps.
 # grid: full Cartesian product of the ranges below.
@@ -163,6 +166,12 @@ run_case() {
     wandb_group="$(_wandb_group "${hp_choice}_${asym_choice}")"
 
     for seed in ${SEEDS}; do
+      local run_dir="${RUN_LOG_ROOT}/${case_label}/seed_${seed}"
+      local stdout_log="${run_dir}/stdout.log"
+      local metrics_jsonl="${run_dir}/metrics.jsonl"
+      local command_file="${run_dir}/command.sh"
+      local metadata_file="${run_dir}/metadata.env"
+
       mapfile -t base_cmd < <(_python_cmd)
       local env_cmd=(env)
       if [[ "${UNSET_LD_LIBRARY_PATH}" == "true" ]]; then
@@ -171,6 +180,7 @@ run_case() {
       env_cmd+=(
         "CUDA_VISIBLE_DEVICES=${GPU_ID}"
         "XLA_PYTHON_CLIENT_PREALLOCATE=false"
+        "METRICS_JSONL=${metrics_jsonl}"
       )
 
       local cmd=(
@@ -198,10 +208,47 @@ run_case() {
         continue
       fi
 
-      if [[ "${CONTINUE_ON_ERROR}" == "true" ]]; then
-        (cd "${LEARNING_DIR}" && "${cmd[@]}") || true
-      else
-        (cd "${LEARNING_DIR}" && "${cmd[@]}")
+      mkdir -p "${run_dir}"
+      printf '#!/usr/bin/env bash\nset -euo pipefail\ncd %q\n' "${LEARNING_DIR}" > "${command_file}"
+      printf '%q ' "${cmd[@]}" >> "${command_file}"
+      printf '\n' >> "${command_file}"
+      chmod +x "${command_file}"
+      {
+        printf 'sweep_run_id=%q\n' "${SWEEP_RUN_ID}"
+        printf 'task=%q\n' "${TASK}"
+        printf 'policy=%q\n' "m2td3"
+        printf 'seed=%q\n' "${seed}"
+        printf 'asymmetric_critic=%q\n' "${asymmetric_critic}"
+        printf 'case_label=%q\n' "${case_label}"
+        printf 'hp_choice=%q\n' "${hp_choice}"
+        printf 'wandb_group=%q\n' "${wandb_group}"
+        printf 'stdout_log=%q\n' "${stdout_log}"
+        printf 'metrics_jsonl=%q\n' "${metrics_jsonl}"
+        printf 'overrides=%q\n' "${overrides[*]}"
+        printf 'base_m2td3_overrides=%q\n' "${BASE_M2TD3_OVERRIDES[*]}"
+      } > "${metadata_file}"
+
+      if [[ ! -f "${RUN_LOG_ROOT}/runs.tsv" ]]; then
+        printf 'sweep_run_id\tcase_label\tseed\tasymmetric_critic\thp_choice\tstdout_log\tmetrics_jsonl\tstatus\n' > "${RUN_LOG_ROOT}/runs.tsv"
+      fi
+
+      set +e
+      (cd "${LEARNING_DIR}" && "${cmd[@]}") 2>&1 | tee "${stdout_log}"
+      status="${PIPESTATUS[0]}"
+      set -e
+      printf '%s\n' "${status}" > "${run_dir}/exit_code.txt"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "${SWEEP_RUN_ID}" \
+        "${case_label}" \
+        "${seed}" \
+        "${asymmetric_critic}" \
+        "${hp_choice}" \
+        "${stdout_log}" \
+        "${metrics_jsonl}" \
+        "${status}" >> "${RUN_LOG_ROOT}/runs.tsv"
+
+      if [[ "${status}" -ne 0 && "${CONTINUE_ON_ERROR}" != "true" ]]; then
+        exit "${status}"
       fi
 
       if [[ "${SMOKE}" == "true" ]]; then
