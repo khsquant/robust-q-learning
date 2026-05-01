@@ -96,6 +96,14 @@ def _replicate_across_devices(value, local_devices_to_use: int):
   )
 
 
+def _uint64_mod(step: types.UInt64, divisor: int) -> jax.Array:
+  """Computes a small integer modulo for Brax UInt64 counters."""
+  hi_mod = step.hi % divisor
+  lo_mod = step.lo % divisor
+  word_mod = (2**32) % divisor
+  return (hi_mod * word_mod + lo_mod) % divisor
+
+
 def _init_training_state(
     key: PRNGKey,
     obs_size: Union[int, Dict[str, specs.Array]],    
@@ -186,6 +194,7 @@ def train(
     omega_clip : float = 0.5,
     num_omegas : int = 5,
     omega_distance_threshold: float = 0.1,
+    policy_frequency: int = 2,
 ):
   """m2td3 training."""
   process_id = jax.process_index()
@@ -331,6 +340,18 @@ def train(
         key_critic,
         optimizer_state=training_state.q_optimizer_state,
     )
+
+    def update_actor(dynamics_params):
+      return actor_update(
+          training_state.policy_params,
+          training_state.normalizer_params,
+          training_state.q_params,
+          dynamics_params,
+          transitions,
+          key_actor,
+          optimizer_state=training_state.policy_optimizer_state,
+      )
+
     (omega_loss, min_idx), omega_params, omega_optimizer_state = omega_update(
         training_state.omega_params,
         training_state.policy_params,
@@ -341,14 +362,29 @@ def train(
         optimizer_state=training_state.omega_optimizer_state,
     )
     print("min idx shape", training_state.omega_params[jnp.arange(batch_size), min_idx].shape)
-    actor_loss, policy_params, policy_optimizer_state = actor_update(
-        training_state.policy_params,
-        training_state.normalizer_params,
-        training_state.q_params,
-        training_state.omega_params[jnp.arange(batch_size), min_idx],
-        transitions,
-        key_actor,
-        optimizer_state=training_state.policy_optimizer_state,
+    actor_dynamics_params = training_state.omega_params[jnp.arange(batch_size), min_idx]
+
+    new_gradient_steps = training_state.gradient_steps + 1
+    should_update_actor = _uint64_mod(new_gradient_steps, policy_frequency) == 0
+
+    def update_actor_for_cond(_):
+      actor_loss, policy_params, policy_optimizer_state = update_actor(
+          actor_dynamics_params
+      )
+      return actor_loss, policy_params, policy_optimizer_state
+
+    def skip_actor_for_cond(_):
+      return (
+          jnp.zeros_like(critic_loss),
+          training_state.policy_params,
+          training_state.policy_optimizer_state,
+      )
+
+    actor_loss, policy_params, policy_optimizer_state = jax.lax.cond(
+        should_update_actor,
+        update_actor_for_cond,
+        skip_actor_for_cond,
+        operand=None,
     )
 
     new_target_q_params = jax.tree_util.tree_map(
@@ -360,6 +396,8 @@ def train(
     metrics = {
         'critic_loss': critic_loss,
         'actor_loss': actor_loss,
+        'actor_updated': should_update_actor.astype(jnp.float32),
+        'omega_loss': omega_loss,
         'current_q_min' : current_q.min(),
         'current_q_max' : current_q.max(),
         'current_q_mean' : current_q.mean(),
@@ -376,7 +414,7 @@ def train(
         target_q_params=new_target_q_params,
         omega_optimizer_state=omega_optimizer_state,
         omega_params=omega_params,
-        gradient_steps=training_state.gradient_steps + 1,
+        gradient_steps=new_gradient_steps,
         env_steps=training_state.env_steps,
         normalizer_params=training_state.normalizer_params,
         noise_scales=training_state.noise_scales,
@@ -485,7 +523,7 @@ def train(
       Metrics,
   ]:
     B, K, D = training_state.omega_params.shape
-    experience_key, training_key, omega_key1, omega_key2, omega_key3, omega_key4 = jax.random.split(key,6)
+    experience_key, training_key, omega_key1, omega_key2, omega_key3, omega_key4, param_key = jax.random.split(key,7)
     print("omega params in 1 ", training_state.omega_params)
     omega_params, _ = resample_params(training_state.omega_params, omega_key1)
     print("omge params in training_step", omega_params.shape)
@@ -496,10 +534,6 @@ def train(
     dynamics_params += omega_std * jax.random.normal(omega_key4)
     dynamics_params = jnp.clip(dynamics_params, dr_range_low, dr_range_high)
     print("omega params in 4 ", dynamics_params)
-    dynamics_params = jax.random.uniform(
-      param_key, shape=(num_envs // jax.process_count() // local_devices_to_use, len(dr_range_low),),
-        minval=dr_range_low, maxval=dr_range_high
-      )
     normalizer_params, noise_scales, env_state, buffer_state, simul_info = get_experience(
         training_state.normalizer_params,
         training_state.policy_params,

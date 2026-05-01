@@ -57,7 +57,7 @@ TD3_SWEEPS=(
 M2TD3_SWEEPS=(
   # Keep this first: before tuning M2TD3, compare this zeroed M2-specific
   # baseline against td3/default to check whether M2TD3 reaches TD3 performance.
-  "zero_td3_check|td3_check_num_omegas-1_omega_distance_threshold-0_0_omega_noise_rate-0_0_omega_clip-0_0_omega_std-0_0|++num_omegas=1 ++omega_distance_threshold=0.0 ++omega_noise_rate=0.0 ++omega_clip=0.0 ++omega_std=0.0"
+  "zero_td3_check|td3_check_num_omegas-1_omega_distance_threshold-0_0_omega_noise_rate-0_0_omega_clip-0_0_omega_std-0_0_policy_frequency-2|++num_omegas=1 ++omega_distance_threshold=0.0 ++omega_noise_rate=0.0 ++omega_clip=0.0 ++omega_std=0.0 ++policy_frequency=2"
   "omega005_k5|omega_distance_threshold-0_05_num_omegas-5_omega_noise_rate-0_2_omega_clip-0_5_omega_std-1_0|++omega_distance_threshold=0.05 ++num_omegas=5"
   "omega010_k5|omega_distance_threshold-0_1_num_omegas-5_omega_noise_rate-0_2_omega_clip-0_5_omega_std-1_0|++omega_distance_threshold=0.1 ++num_omegas=5"
   "omega010_k10|omega_distance_threshold-0_1_num_omegas-10_omega_noise_rate-0_2_omega_clip-0_5_omega_std-1_0|++omega_distance_threshold=0.1 ++num_omegas=10"
