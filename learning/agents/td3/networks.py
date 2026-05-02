@@ -60,6 +60,7 @@ def make_inference_fn(td3_networks: Td3Networks):
 def make_td3_networks(
     observation_size: int,
     action_size: int,
+    param_size: int = 0,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     hidden_layer_sizes: Sequence[int] = (256, 256),
     activation: networks.ActivationFn = linen.relu,
@@ -71,6 +72,7 @@ def make_td3_networks(
     num_atoms: int = 101,
     v_min: float = 0.,
     v_max: float = 0.,
+    dr_augmented_critic: bool = False,
 ) -> Td3Networks:
     """Make td3 networks."""
     policy_network = networks.make_deterministic_policy_network(
@@ -82,6 +84,8 @@ def make_td3_networks(
         layer_norm=policy_network_layer_norm,
         obs_key = policy_obs_key
     )
+    if distributional_q and dr_augmented_critic:
+        raise ValueError("dr_augmented_critic is not supported with distributional_q.")
     if distributional_q:
         q_network=networks.make_distributional_q_network(
         observation_size,
@@ -91,6 +95,17 @@ def make_td3_networks(
         v_min,
         preprocess_observations_fn=preprocess_observations_fn,
         #    hidden_layer_sizes=hidden_layer_sizes,
+    )
+    elif dr_augmented_critic:
+        q_network = networks.make_augmented_q_network(
+        observation_size,
+        action_size,
+        param_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key = value_obs_key,
     )
     else:
         q_network = networks.make_q_network(

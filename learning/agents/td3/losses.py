@@ -34,11 +34,14 @@ def make_losses(
     reward_scaling: float,
     discounting: float,
     distributional_q : bool=False,
+    dr_augmented_critic: bool = False,
 ):
     """Creates the td3 losses."""
 
     policy_network = td3_network.policy_network
     q_network = td3_network.q_network
+    if distributional_q and dr_augmented_critic:
+        raise ValueError("dr_augmented_critic is not supported with distributional_q.")
     if distributional_q:
         def critic_loss(
             q_params: Params,
@@ -89,19 +92,37 @@ def make_losses(
             noise: jnp.ndarray,
             key: PRNGKey,
         ) -> jnp.ndarray:
-            q_old_action = q_network.apply(
-                normalizer_params, q_params, transitions.observation, transitions.action
-            )
+            if dr_augmented_critic:
+                q_old_action = q_network.apply(
+                    normalizer_params,
+                    q_params,
+                    transitions.observation,
+                    transitions.action,
+                    transitions.dynamics_params,
+                )
+            else:
+                q_old_action = q_network.apply(
+                    normalizer_params, q_params, transitions.observation, transitions.action
+                )
             next_action = policy_network.apply(
                 normalizer_params, policy_params, transitions.next_observation
             )
             next_action = jnp.clip(next_action + noise, -1.0, 1.0)
-            next_q = q_network.apply(
-                normalizer_params,
-                target_q_params,
-                transitions.next_observation,
-                next_action,
-            )
+            if dr_augmented_critic:
+                next_q = q_network.apply(
+                    normalizer_params,
+                    target_q_params,
+                    transitions.next_observation,
+                    next_action,
+                    transitions.dynamics_params,
+                )
+            else:
+                next_q = q_network.apply(
+                    normalizer_params,
+                    target_q_params,
+                    transitions.next_observation,
+                    next_action,
+                )
             next_v = jnp.min(next_q, axis=-1) 
             target_q = jax.lax.stop_gradient(
                 transitions.reward * reward_scaling
@@ -126,9 +147,18 @@ def make_losses(
         action = policy_network.apply(
             normalizer_params, policy_params, transitions.observation
         )
-        q_action = q_network.apply(
-            normalizer_params, q_params, transitions.observation, action
-        )
+        if dr_augmented_critic:
+            q_action = q_network.apply(
+                normalizer_params,
+                q_params,
+                transitions.observation,
+                action,
+                transitions.dynamics_params,
+            )
+        else:
+            q_action = q_network.apply(
+                normalizer_params, q_params, transitions.observation, action
+            )
         min_q = jnp.min(q_action, axis=-1)
         return -jnp.mean(min_q)
 

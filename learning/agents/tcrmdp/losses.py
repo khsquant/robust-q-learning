@@ -23,6 +23,7 @@ def make_losses(
     radius: float,
     omniscient_adversary: bool = True,
     asymmetric_critic: bool = True,
+    dr_augmented_critic: bool = False,
 ):
   """Creates critic and actor losses."""
   agent_policy = tcrmdp_network.agent_policy_network
@@ -30,6 +31,12 @@ def make_losses(
   adversary_policy = tcrmdp_network.adversary_policy_network
   adversary_q = tcrmdp_network.adversary_q_network
   algorithm = tcrmdp_network.algorithm
+
+  def _agent_q_apply(normalizer_params, q_params, critic_obs, action, params):
+    obs = _obs("critic_state", critic_obs)
+    if dr_augmented_critic:
+      return agent_q.apply(normalizer_params, q_params, obs, action, params)
+    return agent_q.apply(normalizer_params, q_params, obs, action)
 
   def agent_critic_loss(
       q_params: Params,
@@ -41,11 +48,12 @@ def make_losses(
       key: PRNGKey,
   ):
     del key
-    q_old_action = agent_q.apply(
+    q_old_action = _agent_q_apply(
         normalizer_params,
         q_params,
-        _obs("critic_state", transitions.critic_observation),
+        transitions.critic_observation,
         transitions.action,
+        transitions.dynamics_params,
     )
     next_action = agent_policy.apply(
         normalizer_params,
@@ -53,11 +61,12 @@ def make_losses(
         _obs("actor_state", transitions.next_actor_observation),
     )
     next_action = jnp.clip(next_action + noise, -1.0, 1.0)
-    next_q = agent_q.apply(
+    next_q = _agent_q_apply(
         normalizer_params,
         target_q_params,
-        _obs("critic_state", transitions.next_critic_observation),
+        transitions.next_critic_observation,
         next_action,
+        transitions.next_dynamics_params,
     )
     next_v = jnp.min(next_q, axis=-1)
     target_q = jax.lax.stop_gradient(
@@ -82,11 +91,12 @@ def make_losses(
         policy_params,
         _obs("actor_state", transitions.actor_observation),
     )
-    q_action = agent_q.apply(
+    q_action = _agent_q_apply(
         normalizer_params,
         q_params,
-        _obs("critic_state", transitions.critic_observation),
+        transitions.critic_observation,
         action,
+        transitions.dynamics_params,
     )
     return -jnp.mean(jnp.min(q_action, axis=-1))
 
@@ -174,12 +184,14 @@ def make_losses(
         algorithm,
         omniscient_adversary,
         asymmetric_critic,
+        dr_augmented_critic,
     )
-    q_action = agent_q.apply(
+    q_action = _agent_q_apply(
         normalizer_params,
         q_params,
-        _obs("critic_state", proposed_critic_obs),
+        proposed_critic_obs,
         transitions.action,
+        proposed_params,
     )
     return jnp.mean(jnp.min(q_action, axis=-1))
 

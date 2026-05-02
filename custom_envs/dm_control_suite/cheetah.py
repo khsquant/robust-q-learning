@@ -122,13 +122,7 @@ class Run(mjx_env.MjxEnv):
         data.qpos[1:],
         data.qvel,
     ])
-    privileged_state = jp.concatenate([
-      state,
-      self.mjx_model.geom_friction[FLOOR_GEOM_ID, 0:1],
-      self.mjx_model.dof_frictionloss[3:],
-      self.mjx_model.body_ipos[TORSO_BODY_ID],
-      self.mjx_model.body_mass[1:],
-    ])
+    privileged_state = state
     # return state
     return {
         "state": state,

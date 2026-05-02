@@ -34,6 +34,7 @@ def make_losses(
     reward_scaling: float,
     discounting: float,
     action_size: int,
+    dr_augmented_critic: bool = False,
 ):
   """Creates the SAC losses."""
 
@@ -70,9 +71,18 @@ def make_losses(
       transitions: Transition,
       key: PRNGKey,
   ) -> jnp.ndarray:
-    q_old_action = q_network.apply(
-        normalizer_params, q_params, transitions.observation, transitions.action
-    )
+    if dr_augmented_critic:
+      q_old_action = q_network.apply(
+          normalizer_params,
+          q_params,
+          transitions.observation,
+          transitions.action,
+          transitions.dynamics_params,
+      )
+    else:
+      q_old_action = q_network.apply(
+          normalizer_params, q_params, transitions.observation, transitions.action
+      )
     next_dist_params = policy_network.apply(
         normalizer_params, policy_params, transitions.next_observation
     )
@@ -83,12 +93,21 @@ def make_losses(
         next_dist_params, next_action
     )
     next_action = parametric_action_distribution.postprocess(next_action)
-    next_q = q_network.apply(
-        normalizer_params,
-        target_q_params,
-        transitions.next_observation,
-        next_action,
-    )
+    if dr_augmented_critic:
+      next_q = q_network.apply(
+          normalizer_params,
+          target_q_params,
+          transitions.next_observation,
+          next_action,
+          transitions.dynamics_params,
+      )
+    else:
+      next_q = q_network.apply(
+          normalizer_params,
+          target_q_params,
+          transitions.next_observation,
+          next_action,
+      )
     next_v = jnp.min(next_q, axis=-1) - alpha * next_log_prob
     target_q = jax.lax.stop_gradient(
         transitions.reward * reward_scaling
@@ -119,9 +138,18 @@ def make_losses(
     )
     log_prob = parametric_action_distribution.log_prob(dist_params, action)
     action = parametric_action_distribution.postprocess(action)
-    q_action = q_network.apply(
-        normalizer_params, q_params, transitions.observation, action
-    )
+    if dr_augmented_critic:
+      q_action = q_network.apply(
+          normalizer_params,
+          q_params,
+          transitions.observation,
+          action,
+          transitions.dynamics_params,
+      )
+    else:
+      q_action = q_network.apply(
+          normalizer_params, q_params, transitions.observation, action
+      )
     min_q = jnp.min(q_action, axis=-1)
     actor_loss = alpha * log_prob - min_q
     return jnp.mean(actor_loss)

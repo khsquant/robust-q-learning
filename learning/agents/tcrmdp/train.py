@@ -207,6 +207,7 @@ def train(
     radius: float = 0.001,
     omniscient_adversary: bool = True,
     asymmetric_critic: bool = True,
+    dr_augmented_critic: bool = False,
     algorithm: str = tcrmdp_networks.TC_M2TD3,
     **unused_kwargs,
 ):
@@ -297,11 +298,14 @@ def train(
         if algorithm == tcrmdp_networks.VANILLA_TC_M2TD3
         else base_obs_size + dynamics_param_size
     )
-    critic_obs_size = (
-        base_obs_size + dynamics_param_size
-        if asymmetric_critic
-        else actor_obs_size
-    )
+    if dr_augmented_critic:
+      critic_obs_size = base_obs_size
+    else:
+      critic_obs_size = (
+          base_obs_size + dynamics_param_size
+          if asymmetric_critic
+          else actor_obs_size
+      )
     adv_obs_size = base_obs_size + dynamics_param_size + env.action_size
   tc_obs_size = {
       "actor_state": specs.Array((actor_obs_size,), jnp.dtype("float32")),
@@ -323,6 +327,7 @@ def train(
       dynamics_param_size=dynamics_param_size,
       algorithm=algorithm,
       preprocess_observations_fn=normalize_fn,
+      dr_augmented_critic=dr_augmented_critic,
   )
   make_policy = tcrmdp_networks.make_inference_fn(tcrmdp_network)
 
@@ -376,6 +381,7 @@ def train(
       radius=radius,
       omniscient_adversary=omniscient_adversary,
       asymmetric_critic=asymmetric_critic,
+      dr_augmented_critic=dr_augmented_critic,
   )
   agent_critic_update = gradients.gradient_update_fn(
       agent_critic_loss,
@@ -612,6 +618,7 @@ def train(
         algorithm,
         omniscient_adversary,
         asymmetric_critic,
+        dr_augmented_critic,
     )
     if random_actions:
       actions = jax.random.uniform(
@@ -641,6 +648,7 @@ def train(
         algorithm,
         omniscient_adversary,
         asymmetric_critic,
+        dr_augmented_critic,
     )
     if random_actions:
       adv_actions = jax.random.uniform(
@@ -679,6 +687,7 @@ def train(
         algorithm,
         omniscient_adversary,
         asymmetric_critic,
+        dr_augmented_critic,
     )
     next_agent_action = tcrmdp_network.agent_policy_network.apply(
         training_state.normalizer_params,
@@ -694,6 +703,7 @@ def train(
         algorithm,
         omniscient_adversary,
         asymmetric_critic,
+        dr_augmented_critic,
     )
     normalizer_params = running_statistics.update(
         training_state.normalizer_params,

@@ -101,6 +101,7 @@ def make_tcrmdp_networks(
     activation: networks.ActivationFn = linen.relu,
     policy_network_layer_norm: bool = False,
     q_network_layer_norm: bool = False,
+    dr_augmented_critic: bool = False,
     **unused_kwargs,
 ) -> TCRMDPNetworks:
   """Builds agent and adversary networks for TC algorithms."""
@@ -117,15 +118,27 @@ def make_tcrmdp_networks(
       layer_norm=policy_network_layer_norm,
       obs_key="actor_state",
   )
-  agent_q_network = networks.make_q_network(
-      observation_size,
-      action_size,
-      preprocess_observations_fn=preprocess_observations_fn,
-      hidden_layer_sizes=hidden_layer_sizes,
-      activation=activation,
-      layer_norm=q_network_layer_norm,
-      obs_key="critic_state",
-  )
+  if dr_augmented_critic:
+    agent_q_network = networks.make_augmented_q_network(
+        observation_size,
+        action_size,
+        dynamics_param_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key="critic_state",
+    )
+  else:
+    agent_q_network = networks.make_q_network(
+        observation_size,
+        action_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key="critic_state",
+    )
   adversary_policy_network = networks.make_deterministic_policy_network(
       dynamics_param_size,
       observation_size,

@@ -53,6 +53,7 @@ def build_observations(
     algorithm: str,
     omniscient_adversary: bool = True,
     asymmetric_critic: bool = True,
+    dr_augmented_critic: bool = False,
 ) -> Tuple[jax.Array, jax.Array, jax.Array]:
   state = raw_state(obs)
   psi = normalize_params(params, dr_low, dr_high)
@@ -68,7 +69,10 @@ def build_observations(
     actor_obs = state
   else:
     actor_obs = state_and_psi
-  critic_obs = state_and_psi if asymmetric_critic else actor_obs
+  if dr_augmented_critic:
+    critic_obs = state
+  else:
+    critic_obs = state_and_psi if asymmetric_critic else actor_obs
   adv_obs = jnp.concatenate([state_and_psi, agent_action], axis=-1)
   return actor_obs, critic_obs, adv_obs
 

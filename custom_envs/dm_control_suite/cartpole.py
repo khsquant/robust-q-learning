@@ -228,13 +228,7 @@ class Balance(mjx_env.MjxEnv):
         pole_angle_sin,
         data.qvel,
     ])
-    privileged_state = jp.concatenate([
-      state,
-      self.mjx_model.geom_friction[FLOOR_GEOM_ID, 0:1],
-      self.mjx_model.dof_frictionloss,
-      self.mjx_model.body_ipos[POLE_BODY_ID],
-      self.mjx_model.body_mass[1:],
-    ])
+    privileged_state = state
 
     return {
       "state" : state,

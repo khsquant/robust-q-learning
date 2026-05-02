@@ -13,7 +13,7 @@ set -euo pipefail
 #   bash commands/m2td3_omega_selection_sweeps.sh 0
 #   DRY_RUN=true bash commands/m2td3_omega_selection_sweeps.sh 0
 #   SWEEP_MODE=grid DRY_RUN=true bash commands/m2td3_omega_selection_sweeps.sh 0
-#   SMOKE=true USE_WANDB=false SEEDS="1" ASYMMETRIC_CRITICS=true bash commands/m2td3_omega_selection_sweeps.sh 0
+#   SMOKE=true USE_WANDB=false SEEDS="1" bash commands/m2td3_omega_selection_sweeps.sh 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -22,7 +22,8 @@ LEARNING_DIR="${REPO_ROOT}/learning"
 GPU_ID="${1:-${GPU_ID:-0}}"
 TASK="${TASK:-CheetahRun}"
 SEEDS="${SEEDS:-1 2 3 4 5}"
-ASYMMETRIC_CRITICS="${ASYMMETRIC_CRITICS:-true false}"
+DR_AUGMENTED_CRITIC="${DR_AUGMENTED_CRITIC:-true}"
+ASYMMETRIC_CRITIC="${ASYMMETRIC_CRITIC:-false}"
 WANDB_PROJECT="${WANDB_PROJECT:-qlearning-m2td3-omega-selection-sweeps}"
 WANDB_GROUP_PREFIX="${WANDB_GROUP_PREFIX:-}"
 USE_WANDB="${USE_WANDB:-true}"
@@ -102,7 +103,6 @@ if [[ "${SMOKE}" == "true" ]]; then
   )
 fi
 
-read -r -a SELECTED_ASYMMETRIC_CRITICS <<< "${ASYMMETRIC_CRITICS}"
 read -r -a EXTRA_OVERRIDE_ARGS <<< "${EXTRA_OVERRIDES}"
 
 COMMON_OVERRIDES=(
@@ -114,6 +114,8 @@ COMMON_OVERRIDES=(
   "save_agent=${SAVE_AGENT}"
   "randomization=true"
   "eval_randomization=true"
+  "dr_augmented_critic=${DR_AUGMENTED_CRITIC}"
+  "asymmetric_critic=${ASYMMETRIC_CRITIC}"
 )
 
 _python_cmd() {
@@ -159,13 +161,12 @@ run_case() {
   shift 2
   local overrides=("$@")
 
-  for asymmetric_critic in "${SELECTED_ASYMMETRIC_CRITICS[@]}"; do
-    local asym_choice="asymmetric_critic-${asymmetric_critic}"
-    local case_label="m2td3_${label}_asym${asymmetric_critic}"
-    local wandb_group
-    wandb_group="$(_wandb_group "${hp_choice}_${asym_choice}")"
+  local critic_choice="dr_augmented_critic-${DR_AUGMENTED_CRITIC}_asymmetric_critic-${ASYMMETRIC_CRITIC}"
+  local case_label="m2td3_${label}_draug${DR_AUGMENTED_CRITIC}_asym${ASYMMETRIC_CRITIC}"
+  local wandb_group
+  wandb_group="$(_wandb_group "${hp_choice}_${critic_choice}")"
 
-    for seed in ${SEEDS}; do
+  for seed in ${SEEDS}; do
       local run_dir="${RUN_LOG_ROOT}/${case_label}/seed_${seed}"
       local stdout_log="${run_dir}/stdout.log"
       local metrics_jsonl="${run_dir}/metrics.jsonl"
@@ -191,7 +192,6 @@ run_case() {
         "exp_name=${case_label}"
         "comment=_${case_label}"
         "wandb_group=${wandb_group}"
-        "asymmetric_critic=${asymmetric_critic}"
         "${COMMON_OVERRIDES[@]}"
         "${SMOKE_OVERRIDES[@]}"
         "${BASE_M2TD3_OVERRIDES[@]}"
@@ -218,7 +218,8 @@ run_case() {
         printf 'task=%q\n' "${TASK}"
         printf 'policy=%q\n' "m2td3"
         printf 'seed=%q\n' "${seed}"
-        printf 'asymmetric_critic=%q\n' "${asymmetric_critic}"
+        printf 'dr_augmented_critic=%q\n' "${DR_AUGMENTED_CRITIC}"
+        printf 'asymmetric_critic=%q\n' "${ASYMMETRIC_CRITIC}"
         printf 'case_label=%q\n' "${case_label}"
         printf 'hp_choice=%q\n' "${hp_choice}"
         printf 'wandb_group=%q\n' "${wandb_group}"
@@ -229,7 +230,7 @@ run_case() {
       } > "${metadata_file}"
 
       if [[ ! -f "${RUN_LOG_ROOT}/runs.tsv" ]]; then
-        printf 'sweep_run_id\tcase_label\tseed\tasymmetric_critic\thp_choice\tstdout_log\tmetrics_jsonl\tstatus\n' > "${RUN_LOG_ROOT}/runs.tsv"
+        printf 'sweep_run_id\tcase_label\tseed\tdr_augmented_critic\tasymmetric_critic\thp_choice\tstdout_log\tmetrics_jsonl\tstatus\n' > "${RUN_LOG_ROOT}/runs.tsv"
       fi
 
       set +e
@@ -237,11 +238,12 @@ run_case() {
       status="${PIPESTATUS[0]}"
       set -e
       printf '%s\n' "${status}" > "${run_dir}/exit_code.txt"
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "${SWEEP_RUN_ID}" \
         "${case_label}" \
         "${seed}" \
-        "${asymmetric_critic}" \
+        "${DR_AUGMENTED_CRITIC}" \
+        "${ASYMMETRIC_CRITIC}" \
         "${hp_choice}" \
         "${stdout_log}" \
         "${metrics_jsonl}" \
@@ -254,7 +256,6 @@ run_case() {
       if [[ "${SMOKE}" == "true" ]]; then
         exit 0
       fi
-    done
   done
 }
 

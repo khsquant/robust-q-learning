@@ -14,7 +14,7 @@
 
 """m2td3 networks."""
 
-from typing import Mapping, Sequence, Tuple
+from typing import Sequence, Tuple
 
 from brax.training import distribution
 from module import networks
@@ -57,56 +57,6 @@ def make_inference_fn(m2td3_networks: M2TD3Networks):
         return stochastic_policy
 
   return make_policy
-def make_m2td3_q_network(
-    obs_size: types.ObservationSize,
-    action_size: int,
-    param_size : int,
-    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
-    hidden_layer_sizes: Sequence[int] = (256, 256),
-    activation = linen.relu,
-    n_critics: int = 2,
-    layer_norm: bool = False,
-    obs_key: str = 'state',
-):
-  """Creates a value network."""
-
-  class QModule(linen.Module):
-    """Q Module."""
-
-    n_critics: int
-
-    @linen.compact
-    def __call__(self, obs: jnp.ndarray, actions: jnp.ndarray,params:jnp.ndarray):
-      hidden = jnp.concatenate([obs, actions, params], axis=-1)
-      res = []
-      for _ in range(self.n_critics):
-        q = networks.MLP(
-            layer_sizes=list(hidden_layer_sizes) + [1],
-            activation=activation,
-            kernel_init=jax.nn.initializers.lecun_uniform(),
-            layer_norm=layer_norm,
-        )(hidden)
-        res.append(q)
-      return jnp.concatenate(res, axis=-1)
-
-  q_module = QModule(n_critics=n_critics)
-
-  def apply(processor_params, q_params, obs, actions, params):
-    if isinstance(obs, Mapping):
-      obs = preprocess_observations_fn(
-          obs[obs_key], networks.normalizer_select(processor_params, obs_key)
-      )
-    else:
-      obs = preprocess_observations_fn(obs, processor_params)
-    return q_module.apply(q_params, obs, actions, params)
-  obs_size = networks._get_obs_state_size(obs_size, obs_key)
-  dummy_obs = jnp.zeros((1, obs_size))
-  dummy_action = jnp.zeros((1, action_size))
-  dummy_params = jnp.zeros((1,param_size))
-  return networks.FeedForwardNetwork(
-      init=lambda key: q_module.init(key, dummy_obs, dummy_action, dummy_params), apply=apply
-  )
-
 def make_m2td3_networks(
     observation_size: int,
     action_size: int,
@@ -130,7 +80,7 @@ def make_m2td3_networks(
       layer_norm=policy_network_layer_norm,
       obs_key = policy_obs_key
   )
-  q_network = make_m2td3_q_network(
+  q_network = networks.make_augmented_q_network(
       observation_size,
       action_size,
       param_size,

@@ -17,6 +17,7 @@ eval_with_training_env : false #used by gmmtd3
 #policy
 policy : td3
 asymmetric_critic: true
+dr_augmented_critic: true
 distributional_q : false
 
 #dynamics shift

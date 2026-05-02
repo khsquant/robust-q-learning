@@ -275,8 +275,15 @@ def _adv_randomizer(task: str, randomization_fn):
     return registry.get_domain_randomizer_eval(task)
 
 
+def _cfg_flag(cfg, name: str, default: bool = False) -> bool:
+    if name in cfg and not OmegaConf.is_missing(cfg, name):
+        return bool(getattr(cfg, name))
+    return default
+
+
 def train_sac(cfg, randomization_fn, env, eval_env=None):
     sac_params = _sac_config(cfg.task)
+    sac_params.dr_augmented_critic = _cfg_flag(cfg, "dr_augmented_critic")
     _maybe_override_config(sac_params, cfg)
     sac_training_params = dict(sac_params)
     wandb_name = (
@@ -369,6 +376,7 @@ def train_wdsac(cfg, randomization_fn, env, eval_env=None):
 
 def train_td3(cfg, randomization_fn, env, eval_env=None):
     td3_params = _td3_config(cfg.task)
+    td3_params.dr_augmented_critic = _cfg_flag(cfg, "dr_augmented_critic")
     _maybe_override_config(td3_params, cfg)
     td3_training_params = dict(td3_params)
     wandb_name = (
@@ -412,6 +420,7 @@ def train_m2td3(cfg, randomization_fn, env, eval_env=None):
     m2td3_params.omega_prob_update_rate = None
     m2td3_params.omega_restart_distance = True
     m2td3_params.omega_restart_probability = True
+    m2td3_params.dr_augmented_critic = True
     _maybe_override_config(m2td3_params, cfg)
 
     wandb_name = (
@@ -495,6 +504,7 @@ def train_tcrmdp_algorithm(cfg, randomization_fn, env, algorithm: str, eval_env=
     params = _tcrmdp_config(cfg.task)
     params.omniscient_adversary = cfg.omniscient_adversary
     params.asymmetric_critic = cfg.asymmetric_critic
+    params.dr_augmented_critic = _cfg_flag(cfg, "dr_augmented_critic")
     _maybe_override_config(params, cfg)
 
     if algorithm == tcrmdp_networks.RARL:

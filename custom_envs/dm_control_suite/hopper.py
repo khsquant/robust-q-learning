@@ -130,11 +130,7 @@ class Hopper(mjx_env.MjxEnv):
         data.qvel,
         self._touch(data),
     ])
-    privileged_state = jp.concatenate([
-      state,
-      self.mjx_model.body_mass[1:2],
-
-    ])
+    privileged_state = state
     return {
         "state": state,
         "privileged_state": privileged_state,

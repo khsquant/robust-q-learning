@@ -8,7 +8,7 @@ set -euo pipefail
 # Usage:
 #   bash commands/whole_sweeps.sh 0
 #   DRY_RUN=true bash commands/whole_sweeps.sh 0
-#   SMOKE=true USE_WANDB=false SEEDS="1" ASYMMETRIC_CRITICS=true bash commands/whole_sweeps.sh 0
+#   SMOKE=true USE_WANDB=false SEEDS="1" bash commands/whole_sweeps.sh 0
 #   POLICIES="td3 m2td3" bash commands/whole_sweeps.sh 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,7 +18,8 @@ LEARNING_DIR="${REPO_ROOT}/learning"
 GPU_ID="${1:-${GPU_ID:-0}}"
 TASK="${TASK:-CheetahRun}"
 SEEDS="${SEEDS:-1 2 3 4 5}"
-ASYMMETRIC_CRITICS="${ASYMMETRIC_CRITICS:-true false}"
+DR_AUGMENTED_CRITIC="${DR_AUGMENTED_CRITIC:-true}"
+ASYMMETRIC_CRITIC="${ASYMMETRIC_CRITIC:-false}"
 WANDB_PROJECT="${WANDB_PROJECT:-qlearning-whole-sweeps}"
 WANDB_GROUP_PREFIX="${WANDB_GROUP_PREFIX:-}"
 USE_WANDB="${USE_WANDB:-true}"
@@ -49,9 +50,9 @@ DEFAULT_POLICIES=(
 
 TD3_SWEEPS=(
   "default|default|"
-  "fixed_explore010|std_min-0_1_std_max-0_1_policy_noise-0_1_noise_clip-0_5_policy_frequency-2|++std_min=0.1 ++std_max=0.1 ++policy_noise=0.1 ++noise_clip=0.5 ++policy_frequency=2"
-  "range_explore040|std_min-0_01_std_max-0_4_policy_noise-0_2_noise_clip-0_5_policy_frequency-2|++std_min=0.01 ++std_max=0.4 ++policy_noise=0.2 ++noise_clip=0.5 ++policy_frequency=2"
-  "actor_every_step|std_min-0_1_std_max-0_1_policy_noise-0_2_noise_clip-0_5_policy_frequency-1|++std_min=0.1 ++std_max=0.1 ++policy_noise=0.2 ++noise_clip=0.5 ++policy_frequency=1"
+  # "fixed_explore010|std_min-0_1_std_max-0_1_policy_noise-0_1_noise_clip-0_5_policy_frequency-2|++std_min=0.1 ++std_max=0.1 ++policy_noise=0.1 ++noise_clip=0.5 ++policy_frequency=2"
+  # "range_explore040|std_min-0_01_std_max-0_4_policy_noise-0_2_noise_clip-0_5_policy_frequency-2|++std_min=0.01 ++std_max=0.4 ++policy_noise=0.2 ++noise_clip=0.5 ++policy_frequency=2"
+  # "actor_every_step|std_min-0_1_std_max-0_1_policy_noise-0_2_noise_clip-0_5_policy_frequency-1|++std_min=0.1 ++std_max=0.1 ++policy_noise=0.2 ++noise_clip=0.5 ++policy_frequency=1"
 )
 
 M2TD3_SWEEPS=(
@@ -99,7 +100,6 @@ if [[ "${SMOKE}" == "true" ]]; then
 fi
 
 read -r -a SELECTED_POLICIES <<< "${POLICIES:-${DEFAULT_POLICIES[*]}}"
-read -r -a SELECTED_ASYMMETRIC_CRITICS <<< "${ASYMMETRIC_CRITICS}"
 read -r -a EXTRA_OVERRIDE_ARGS <<< "${EXTRA_OVERRIDES}"
 
 COMMON_OVERRIDES=(
@@ -111,6 +111,8 @@ COMMON_OVERRIDES=(
   "save_agent=${SAVE_AGENT}"
   "randomization=true"
   "eval_randomization=true"
+  "dr_augmented_critic=${DR_AUGMENTED_CRITIC}"
+  "asymmetric_critic=${ASYMMETRIC_CRITIC}"
 )
 
 _python_cmd() {
@@ -149,13 +151,12 @@ run_case() {
   shift 3
   local overrides=("$@")
 
-  for asymmetric_critic in "${SELECTED_ASYMMETRIC_CRITICS[@]}"; do
-    local asym_choice="asymmetric_critic-${asymmetric_critic}"
-    local case_label="${policy}_${label}_asym${asymmetric_critic}"
-    local wandb_group
-    wandb_group="$(_wandb_group "${policy}" "${hp_choice}_${asym_choice}")"
+  local critic_choice="dr_augmented_critic-${DR_AUGMENTED_CRITIC}_asymmetric_critic-${ASYMMETRIC_CRITIC}"
+  local case_label="${policy}_${label}_draug${DR_AUGMENTED_CRITIC}_asym${ASYMMETRIC_CRITIC}"
+  local wandb_group
+  wandb_group="$(_wandb_group "${policy}" "${hp_choice}_${critic_choice}")"
 
-    for seed in ${SEEDS}; do
+  for seed in ${SEEDS}; do
       mapfile -t base_cmd < <(_python_cmd)
       local env_cmd=(env)
       if [[ "${UNSET_LD_LIBRARY_PATH}" == "true" ]]; then
@@ -174,7 +175,6 @@ run_case() {
         "exp_name=${case_label}"
         "comment=_${case_label}"
         "wandb_group=${wandb_group}"
-        "asymmetric_critic=${asymmetric_critic}"
         "${COMMON_OVERRIDES[@]}"
         "${SMOKE_OVERRIDES[@]}"
         "${overrides[@]}"
@@ -191,7 +191,6 @@ run_case() {
       else
         (cd "${LEARNING_DIR}" && "${cmd[@]}")
       fi
-    done
   done
 }
 

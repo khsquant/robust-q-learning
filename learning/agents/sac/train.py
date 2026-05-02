@@ -54,6 +54,17 @@ ReplayBufferState = Any
 _PMAP_AXIS_NAME = 'i'
 
 
+class TransitionwithParams(NamedTuple):
+  """Transition with the dynamics parameters used for the step."""
+  observation: jax.Array
+  action: jax.Array
+  dynamics_params: jax.Array
+  reward: jax.Array
+  discount: jax.Array
+  next_observation: jax.Array
+  extras: dict[str, Any]
+
+
 @flax.struct.dataclass
 class TrainingState:
   """Contains training state for the learner."""
@@ -158,6 +169,7 @@ def train(
     checkpoint_logdir: Optional[str] = None,
     restore_checkpoint_path: Optional[str] = None,
     dr_train_ratio = 1.0,
+    dr_augmented_critic: bool = False,
 ):
   """SAC training."""
   process_id = jax.process_index()
@@ -205,10 +217,13 @@ def train(
   evaluation_randomization_fn = eval_randomization_fn or randomization_fn
   if hasattr(env,'dr_range') :
     dr_low, dr_high = env.dr_range
+    dynamics_param_size = len(dr_low)
     dr_mid = (dr_low + dr_high) / 2.
     dr_scale = (dr_high - dr_low) / 2.
     training_dr_range = (dr_mid - dr_train_ratio*dr_scale, dr_mid + dr_train_ratio*dr_scale)
   else:
+    dr_low = dr_high = None
+    dynamics_param_size = 0
     training_dr_range = None
   training_randomization_fn = None
   if randomization_fn is not None:
@@ -248,7 +263,9 @@ def train(
   sac_network = network_factory(
       observation_size=obs_shape,
       action_size=action_size,
+      param_size=dynamics_param_size,
       preprocess_observations_fn=normalize_fn,
+      dr_augmented_critic=dr_augmented_critic,
   )
   make_policy = sac_networks.make_inference_fn(sac_network)
 
@@ -260,9 +277,10 @@ def train(
   dummy_obs = { key: jnp.zeros(obs_shape[key]) for key in obs_shape } if isinstance(obs_shape, dict) else jnp.zeros((obs_shape,))
   print("dummy_obs", dummy_obs)
   dummy_action = jnp.zeros((action_size,))
-  dummy_transition = Transition(  # pytype: disable=wrong-arg-types  # jax-ndarray
+  dummy_transition = TransitionwithParams(  # pytype: disable=wrong-arg-types  # jax-ndarray
       observation=dummy_obs,
       action=dummy_action,
+      dynamics_params=jnp.zeros((dynamics_param_size,), dtype=jnp.float32),
       reward=0.0,
       discount=0.0,
       next_observation=dummy_obs,
@@ -279,6 +297,7 @@ def train(
       reward_scaling=reward_scaling,
       discounting=discounting,
       action_size=action_size,
+      dr_augmented_critic=dr_augmented_critic,
   )
   alpha_update = gradients.gradient_update_fn(  # pytype: disable=wrong-arg-types  # jax-ndarray
       alpha_loss, alpha_optimizer, pmap_axis_name=_PMAP_AXIS_NAME
@@ -291,7 +310,7 @@ def train(
   )
 
   def sgd_step(
-      carry: Tuple[TrainingState, PRNGKey], transitions: Transition
+      carry: Tuple[TrainingState, PRNGKey], transitions: TransitionwithParams
   ) -> Tuple[Tuple[TrainingState, PRNGKey], Metrics]:
     training_state, key = carry
 
@@ -381,11 +400,15 @@ def train(
         )
         nstate = env.step(env_state, actions, params)
       else:
+        params = jnp.zeros(
+            env_state.reward.shape + (dynamics_param_size,), dtype=jnp.float32
+        )
         nstate = env.step(env_state, actions)
       state_extras = {x: nstate.info[x] for x in extra_fields}
-      return nstate, Transition(  # pytype: disable=wrong-arg-types  # jax-ndarray
+      return nstate, TransitionwithParams(  # pytype: disable=wrong-arg-types  # jax-ndarray
           observation=env_state.obs,
           action=actions,
+          dynamics_params=params,
           reward=nstate.reward,
           discount=1 - nstate.done,
           next_observation= nstate.obs,

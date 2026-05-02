@@ -488,6 +488,66 @@ def make_q_network(
       init=lambda key: q_module.init(key, dummy_obs, dummy_action), apply=apply
   )
 
+
+def make_augmented_q_network(
+    obs_size: types.ObservationSize,
+    action_size: int,
+    param_size: int,
+    preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
+    hidden_layer_sizes: Sequence[int] = (256, 256),
+    activation: ActivationFn = linen.relu,
+    n_critics: int = 2,
+    layer_norm: bool = False,
+    obs_key: str = 'state',
+) -> FeedForwardNetwork:
+  """Creates a Q network that conditions on dynamics parameters."""
+
+  class QModule(linen.Module):
+    """Q Module."""
+
+    n_critics: int
+
+    @linen.compact
+    def __call__(
+        self,
+        obs: jnp.ndarray,
+        actions: jnp.ndarray,
+        params: jnp.ndarray,
+    ):
+      hidden = jnp.concatenate([obs, actions, params], axis=-1)
+      res = []
+      for _ in range(self.n_critics):
+        q = MLP(
+            layer_sizes=list(hidden_layer_sizes) + [1],
+            activation=activation,
+            kernel_init=jax.nn.initializers.lecun_uniform(),
+            layer_norm=layer_norm,
+        )(hidden)
+        res.append(q)
+      return jnp.concatenate(res, axis=-1)
+
+  q_module = QModule(n_critics=n_critics)
+
+  def apply(processor_params, q_params, obs, actions, params):
+    if isinstance(obs, Mapping):
+      obs = preprocess_observations_fn(
+          obs[obs_key], normalizer_select(processor_params, obs_key)
+      )
+    else:
+      obs = preprocess_observations_fn(obs, processor_params)
+    if params.ndim == obs.ndim - 1:
+      params = jnp.broadcast_to(params, obs.shape[:-1] + params.shape[-1:])
+    return q_module.apply(q_params, obs, actions, params)
+
+  obs_size = _get_obs_state_size(obs_size, obs_key)
+  dummy_obs = jnp.zeros((1, obs_size))
+  dummy_action = jnp.zeros((1, action_size))
+  dummy_params = jnp.zeros((1, param_size))
+  return FeedForwardNetwork(
+      init=lambda key: q_module.init(key, dummy_obs, dummy_action, dummy_params),
+      apply=apply,
+  )
+
 class DistributionalQ(linen.Module):
   num_atoms:int
   v_min :float

@@ -59,6 +59,7 @@ def make_inference_fn(sac_networks: SACNetworks):
 def make_sac_networks(
     observation_size: int,
     action_size: int,
+    param_size: int = 0,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     hidden_layer_sizes: Sequence[int] = (256, 256),
     activation: networks.ActivationFn = linen.relu,
@@ -66,6 +67,7 @@ def make_sac_networks(
     q_network_layer_norm: bool = False,
     policy_obs_key: str = 'state',
     value_obs_key: str = 'state',
+    dr_augmented_critic: bool = False,
 ) -> SACNetworks:
   """Make SAC networks."""
   parametric_action_distribution = distribution.NormalTanhDistribution(
@@ -80,15 +82,27 @@ def make_sac_networks(
       layer_norm=policy_network_layer_norm,
       obs_key = policy_obs_key
   )
-  q_network = networks.make_q_network(
-      observation_size,
-      action_size,
-      preprocess_observations_fn=preprocess_observations_fn,
-      hidden_layer_sizes=hidden_layer_sizes,
-      activation=activation,
-      layer_norm=q_network_layer_norm,
-      obs_key = value_obs_key,
-  )
+  if dr_augmented_critic:
+    q_network = networks.make_augmented_q_network(
+        observation_size,
+        action_size,
+        param_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key = value_obs_key,
+    )
+  else:
+    q_network = networks.make_q_network(
+        observation_size,
+        action_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key = value_obs_key,
+    )
   return SACNetworks(
       policy_network=policy_network,
       q_network=q_network,
@@ -98,6 +112,7 @@ def make_sac_networks(
 def make_simba_sac_networks(
     observation_size: int,
     action_size: int,
+    param_size: int = 0,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     policy_hidden_layer_sizes: Sequence[int] = (256,),
     critic_hidden_layer_sizes: Sequence[int] = (512, 512),
@@ -106,6 +121,7 @@ def make_simba_sac_networks(
     q_network_layer_norm: bool = False,
     policy_obs_key: str = 'state',
     value_obs_key: str = 'state',
+    dr_augmented_critic: bool = False,
 ) -> SACNetworks:
   """Make SAC networks."""
   parametric_action_distribution = distribution.NormalTanhDistribution(
@@ -120,15 +136,27 @@ def make_simba_sac_networks(
       layer_norm=policy_network_layer_norm,
       obs_key = policy_obs_key
   )
-  q_network = networks.make_simba_q_network(
-      observation_size,
-      action_size,
-      preprocess_observations_fn=preprocess_observations_fn,
-      hidden_layer_sizes=critic_hidden_layer_sizes,
-      activation=activation,
-      layer_norm=q_network_layer_norm,
-      obs_key = value_obs_key,
-  )
+  if dr_augmented_critic:
+    q_network = networks.make_augmented_q_network(
+        observation_size,
+        action_size,
+        param_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=critic_hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key = value_obs_key,
+    )
+  else:
+    q_network = networks.make_simba_q_network(
+        observation_size,
+        action_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=critic_hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key = value_obs_key,
+    )
   return SACNetworks(
       policy_network=policy_network,
       q_network=q_network,

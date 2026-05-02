@@ -67,6 +67,7 @@ class TransitionwithCritic(NamedTuple):
   reward: jax.Array
   discount: jax.Array
   next_observation: jax.Array
+  dynamics_params: jax.Array
   q_values : jax.Array
   target_lnpdf: jax.Array
   extras: FrozenDict[str, Any]  # recommended
@@ -183,6 +184,7 @@ def train(
     noise_clip=0.5,
     policy_frequency: int = 2,
     distributional_q=False,
+    dr_augmented_critic: bool = False,
     use_wandb=False,
 ):
   """td3 training."""
@@ -274,7 +276,9 @@ def train(
   td3_network, q_support = network_factory(
       observation_size=obs_shape,
       action_size=action_size,
+      param_size=len(dr_range_low),
       preprocess_observations_fn=normalize_fn,
+      dr_augmented_critic=dr_augmented_critic,
   )
   make_policy = td3_networks.make_inference_fn(td3_network)
 
@@ -291,6 +295,7 @@ def train(
       reward=0.0,
       discount=0.0,
       next_observation=dummy_obs,
+      dynamics_params=jnp.zeros((len(dr_range_low),), dtype=jnp.float32),
       q_values=0.,
       target_lnpdf=0.,
       extras={'state_extras': {'truncation': 0.0}, 'policy_extras': {}},
@@ -306,6 +311,7 @@ def train(
       reward_scaling=reward_scaling,
       discounting=discounting,
       distributional_q=distributional_q,
+      dr_augmented_critic=dr_augmented_critic,
   )
   critic_update = gradients.gradient_update_fn(  # pytype: disable=wrong-arg-types  # jax-ndarray
       critic_loss, q_optimizer, has_aux=True, pmap_axis_name=_PMAP_AXIS_NAME
@@ -430,12 +436,14 @@ def train(
     step_key, key = jax.random.split(key)
     actions, policy_extras = policy(env_state.obs, noise_scales, key)
     nstate = env.step(env_state, actions, dynamics_params)
-    state_size = nstate.obs["state"].shape[-1]
-    privileged_obs_info = nstate.obs["privileged_state"][:, state_size:]
-    env_state.obs["privileged_state"] = env_state.obs["privileged_state"].at[
-        :, state_size:
-    ].set(privileged_obs_info)
-    q_values = td3_network.q_network.apply(normalizer_params, q_params, env_state.obs, actions).mean(-1)
+    if dr_augmented_critic:
+      q_values = td3_network.q_network.apply(
+          normalizer_params, q_params, env_state.obs, actions, dynamics_params
+      ).mean(-1)
+    else:
+      q_values = td3_network.q_network.apply(
+          normalizer_params, q_params, env_state.obs, actions
+      ).mean(-1)
     target_lnpdfs = jax.nn.log_softmax(-q_values, -1)
     state_extras = {x: nstate.info[x] for x in extra_fields}
     return nstate, TransitionwithCritic(  # pytype: disable=wrong-arg-types  # jax-ndarray
@@ -444,6 +452,7 @@ def train(
         reward=nstate.reward,
         discount=1 - nstate.done,
         next_observation= nstate.obs,
+        dynamics_params=dynamics_params,
         q_values = q_values,
         target_lnpdf= target_lnpdfs,
         extras={'policy_extras': policy_extras, 'state_extras': state_extras},
