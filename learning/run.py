@@ -287,7 +287,7 @@ def train_sac(cfg, randomization_fn, env, eval_env=None):
     _maybe_override_config(sac_params, cfg)
     sac_training_params = dict(sac_params)
     wandb_name = (
-        f"{cfg.task}.{cfg.policy}.{cfg.seed}.asym={cfg.asymmetric_critic}."
+        f"{cfg.task}.{cfg.policy}.{cfg.seed}"
     )
     _init_wandb(cfg, wandb_name)
 
@@ -380,7 +380,7 @@ def train_td3(cfg, randomization_fn, env, eval_env=None):
     _maybe_override_config(td3_params, cfg)
     td3_training_params = dict(td3_params)
     wandb_name = (
-        f"{cfg.task}.{cfg.policy}.{cfg.seed}.asym={cfg.asymmetric_critic}."
+        f"{cfg.task}.{cfg.policy}.{cfg.seed}"
     )
     _init_wandb(cfg, wandb_name)
 
@@ -424,7 +424,7 @@ def train_m2td3(cfg, randomization_fn, env, eval_env=None):
     _maybe_override_config(m2td3_params, cfg)
 
     wandb_name = (
-        f"{cfg.task}.{cfg.policy}.{cfg.seed}.asym={cfg.asymmetric_critic}"
+        f"{cfg.task}.{cfg.policy}.{cfg.seed}"
         f".dist={m2td3_params.omega_distance_threshold}"
     )
     _init_wandb(cfg, wandb_name)
@@ -466,7 +466,7 @@ def train_gmmtd3(cfg, randomization_fn, env, eval_env=None):
     _maybe_override_config(gmmtd3_params, cfg)
 
     wandb_name = (
-        f"{cfg.task}.{cfg.policy}.seed={cfg.seed}.asym={cfg.asymmetric_critic}"
+        f"{cfg.task}.{cfg.policy}.seed={cfg.seed}"
     )
     _init_wandb(cfg, wandb_name)
 

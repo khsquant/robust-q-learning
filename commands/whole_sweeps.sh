@@ -10,6 +10,7 @@ set -euo pipefail
 #   DRY_RUN=true bash commands/whole_sweeps.sh 0
 #   SMOKE=true USE_WANDB=false SEEDS="1" bash commands/whole_sweeps.sh 0
 #   POLICIES="td3 m2td3" bash commands/whole_sweeps.sh 0
+#   POLICIES="rarl vanilla_tc_m2td3 tc_rarl tc_m2td3" bash commands/whole_sweeps.sh 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -19,7 +20,6 @@ GPU_ID="${1:-${GPU_ID:-0}}"
 TASK="${TASK:-CheetahRun}"
 SEEDS="${SEEDS:-1 2 3 4 5}"
 DR_AUGMENTED_CRITIC="${DR_AUGMENTED_CRITIC:-true}"
-ASYMMETRIC_CRITIC="${ASYMMETRIC_CRITIC:-false}"
 WANDB_PROJECT="${WANDB_PROJECT:-qlearning-whole-sweeps}"
 WANDB_GROUP_PREFIX="${WANDB_GROUP_PREFIX:-}"
 USE_WANDB="${USE_WANDB:-true}"
@@ -37,8 +37,9 @@ EXTRA_OVERRIDES="${EXTRA_OVERRIDES:-}"
 
 DEFAULT_POLICIES=(
   td3
-  m2td3
+  # m2td3
   rarl
+  vanilla_tc_m2td3
   tc_rarl
   tc_m2td3
 )
@@ -72,6 +73,13 @@ RARL_SWEEPS=(
 )
 
 TC_RARL_SWEEPS=(
+  "radius0005|radius-0_0005|radius=0.0005"
+  "radius0010|radius-0_001|radius=0.001"
+  "radius0020|radius-0_002|radius=0.002"
+  "radius0010_dr050|radius-0_001_dr_train_ratio-0_5|radius=0.001 dr_train_ratio=0.5"
+)
+
+VANILLA_TC_M2TD3_SWEEPS=(
   "radius0005|radius-0_0005|radius=0.0005"
   "radius0010|radius-0_001|radius=0.001"
   "radius0020|radius-0_002|radius=0.002"
@@ -112,7 +120,6 @@ COMMON_OVERRIDES=(
   "randomization=true"
   "eval_randomization=true"
   "dr_augmented_critic=${DR_AUGMENTED_CRITIC}"
-  "asymmetric_critic=${ASYMMETRIC_CRITIC}"
 )
 
 _python_cmd() {
@@ -151,8 +158,8 @@ run_case() {
   shift 3
   local overrides=("$@")
 
-  local critic_choice="dr_augmented_critic-${DR_AUGMENTED_CRITIC}_asymmetric_critic-${ASYMMETRIC_CRITIC}"
-  local case_label="${policy}_${label}_draug${DR_AUGMENTED_CRITIC}_asym${ASYMMETRIC_CRITIC}"
+  local critic_choice="dr_augmented_critic-${DR_AUGMENTED_CRITIC}"
+  local case_label="${policy}_${label}_draug${DR_AUGMENTED_CRITIC}"
   local wandb_group
   wandb_group="$(_wandb_group "${policy}" "${hp_choice}_${critic_choice}")"
 
@@ -216,11 +223,14 @@ run_policy_sweep() {
     td3)
       run_sweep_entries td3 "${TD3_SWEEPS[@]}"
       ;;
-    m2td3)
-      run_sweep_entries m2td3 "${M2TD3_SWEEPS[@]}"
-      ;;
+    # m2td3)
+    #   run_sweep_entries m2td3 "${M2TD3_SWEEPS[@]}"
+    #   ;;
     rarl)
       run_sweep_entries rarl "${RARL_SWEEPS[@]}"
+      ;;
+    vanilla_tc_m2td3)
+      run_sweep_entries vanilla_tc_m2td3 "${VANILLA_TC_M2TD3_SWEEPS[@]}"
       ;;
     tc_rarl)
       run_sweep_entries tc_rarl "${TC_RARL_SWEEPS[@]}"
