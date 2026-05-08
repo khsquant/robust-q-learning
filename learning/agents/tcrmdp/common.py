@@ -38,10 +38,11 @@ def action_to_params(
     adv_action: jax.Array,
     dr_low: jax.Array,
     dr_high: jax.Array,
+    scale: float = 1.0,
 ) -> jax.Array:
   dr_mid = (dr_low + dr_high) / 2.0
   dr_scale = (dr_high - dr_low) / 2.0
-  return jnp.clip(dr_mid + dr_scale * adv_action, dr_low, dr_high)
+  return jnp.clip(dr_mid + scale * dr_scale * adv_action, dr_low, dr_high)
 
 
 def build_observations(

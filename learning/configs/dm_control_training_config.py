@@ -136,6 +136,7 @@ def _apply_tcrmdp_td3_defaults(rl_config: config_dict.ConfigDict):
   rl_config.noise_clip = 0.5
   rl_config.policy_frequency = 2
   rl_config.radius = 0.001
+  rl_config.rarl_range_scale = 0.5
   rl_config.network_factory = config_dict.create(
       hidden_layer_sizes=(256, 256),
       policy_network_layer_norm=False,

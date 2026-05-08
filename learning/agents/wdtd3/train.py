@@ -137,8 +137,12 @@ def _init_training_state(
       lmbda_optimizer_state=lmbda_optimizer_state,
       lmbda_params=lmbda_params,
       normalizer_params=normalizer_params,
-      noise_scales= jax.random.normal(key_noise,\
-         (num_envs // jax.process_count() // local_devices_to_use, )) *(std_max - std_min) + std_min,
+      noise_scales=jax.random.uniform(
+          key_noise,
+          (num_envs // jax.process_count() // local_devices_to_use,),
+          minval=std_min,
+          maxval=std_max,
+      ),
   )
   return _replicate_across_devices(ts, local_devices_to_use)
 
@@ -436,8 +440,16 @@ def train(
         pmap_axis_name=_PMAP_AXIS_NAME,
     )
 
-    noise_scales = (1-env_state.done)*noise_scales + \
-          env_state.done* (jax.random.normal(noise_key, shape=noise_scales.shape) *(std_max - std_min) + std_min)
+    noise_scales = (
+        (1 - env_state.done) * noise_scales
+        + env_state.done
+        * jax.random.uniform(
+            noise_key,
+            shape=noise_scales.shape,
+            minval=std_min,
+            maxval=std_max,
+        )
+    )
     simul_info ={
       "simul/reward_mean" : transitions.reward.mean(),
       "simul/reward_std" : transitions.reward.std(),

@@ -94,7 +94,7 @@ def make_td3_networks(
         v_max,
         v_min,
         preprocess_observations_fn=preprocess_observations_fn,
-        #    hidden_layer_sizes=hidden_layer_sizes,
+        hidden_layer_sizes=hidden_layer_sizes,
     )
     elif dr_augmented_critic:
         q_network = networks.make_augmented_q_network(

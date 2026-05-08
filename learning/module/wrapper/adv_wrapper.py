@@ -66,7 +66,9 @@ class AdVmapWrapper(Wrapper):
       get_grad = False,
   ):
     super().__init__(env)
-    self.rand_fn = functools.partial(randomization_fn, model=self.mjx_model, rng=None)
+    self.rand_fn = None
+    if randomization_fn is not None:
+      self.rand_fn = functools.partial(randomization_fn, model=self.mjx_model, rng=None)
     self.get_grad =  get_grad
     self.param_size = param_size
     self.dr_range_low = dr_range_low
@@ -85,8 +87,17 @@ class AdVmapWrapper(Wrapper):
   def reset(self, rng: jax.Array) -> mjx_env.State:
     # state = jax.vmap(reset, in_axes=[self._in_axes, 0])(self._mjx_model_v, rng)
     def dr_reset(rng):
+      if self.rand_fn is None:
+        params = jnp.zeros((self.param_size,), dtype=jnp.float32)
+        return self.env.reset(rng), params
+
       param_rng, rng = jax.random.split(rng)
-      params = jax.random.uniform(param_rng, (self.param_size,), minval=self.dr_range_low, maxval=self.dr_range_high)
+      params = jax.random.uniform(
+          param_rng,
+          (self.param_size,),
+          minval=self.dr_range_low,
+          maxval=self.dr_range_high,
+      )
       mjx_model, inaxes = self.rand_fn(params=params)
       with self.v_env_fn(mjx_model) as v_env:
         return v_env.reset(rng), params
@@ -99,7 +110,7 @@ class AdVmapWrapper(Wrapper):
 
   def step(self, state: mjx_env.State, action: jax.Array, params: jax.Array) -> State:
     def step(params, s, a):
-      if params is None:
+      if params is None or self.rand_fn is None:
         return self.env.step(s,a)
       mjx_model, inaxes = self.rand_fn(params=params)
       with self.v_env_fn(mjx_model) as v_env:

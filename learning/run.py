@@ -46,6 +46,8 @@ from agents.wdsac import networks as wdsac_networks
 from agents.wdsac import train as wdsac
 from agents.wdtd3 import networks as wdtd3_networks
 from agents.wdtd3 import train as wdtd3
+from agents.gmmtd3 import networks as gmmtd3_networks
+from agents.gmmtd3 import train as gmmtd3
 from custom_envs import dm_control_suite, locomotion, manipulation, mjx_env, registry
 from helper import make_dir, parse_cfg
 from learning.configs.dm_control_training_config import (
@@ -123,6 +125,21 @@ def _limit_wandb_group(group: str) -> str:
         f"{len(group)} to {len(limited_group)} chars: {limited_group}"
     )
     return limited_group
+
+
+def _resolve_impl(requested_impl: str) -> str:
+    """Maps legacy impl names and falls back from Warp when CUDA is unavailable."""
+    if requested_impl == "mjx":
+        return "jax"
+    if requested_impl != "warp":
+        return requested_impl
+
+    has_gpu_backend = any(device.platform == "gpu" for device in jax.devices())
+    if has_gpu_backend:
+        return requested_impl
+
+    print("Requested impl='warp' without a GPU backend; falling back to impl='jax'.")
+    return "jax"
 
 
 class BraxDomainRandomizationWrapper(Wrapper):
@@ -277,7 +294,10 @@ def _adv_randomizer(task: str, randomization_fn):
 
 def _cfg_flag(cfg, name: str, default: bool = False) -> bool:
     if name in cfg and not OmegaConf.is_missing(cfg, name):
-        return bool(getattr(cfg, name))
+        value = getattr(cfg, name)
+        if value is None:
+            return default
+        return bool(value)
     return default
 
 
@@ -408,6 +428,41 @@ def train_td3(cfg, randomization_fn, env, eval_env=None):
     return train_fn(environment=env)
 
 
+def train_gmmtd3(cfg, randomization_fn, env, eval_env=None):
+    gmmtd3_params = _td3_config(cfg.task)
+    gmmtd3_params.dr_augmented_critic = _cfg_flag(cfg, "dr_augmented_critic")
+    _maybe_override_config(gmmtd3_params, cfg)
+    gmmtd3_training_params = dict(gmmtd3_params)
+    wandb_name = (
+        f"{cfg.task}.{cfg.policy}.{cfg.seed}.{cfg.beta}"
+    )
+    _init_wandb(cfg, wandb_name)
+
+    network_factory = gmmtd3_networks.make_gmmtd3_networks
+    if "network_factory" in gmmtd3_params:
+        del gmmtd3_training_params["network_factory"]
+        if not cfg.asymmetric_critic:
+            gmmtd3_params.network_factory.value_obs_key = "state"
+        network_factory = functools.partial(
+            gmmtd3_networks.make_gmmtd3_networks,
+            **gmmtd3_params.network_factory,
+        )
+
+    train_fn = functools.partial(
+        gmmtd3.train,
+        **dict(gmmtd3_training_params),
+        network_factory=network_factory,
+        progress_fn=functools.partial(progress_fn, use_wandb=cfg.use_wandb),
+        randomization_fn=_adv_randomizer(cfg.task, randomization_fn),
+        eval_randomization_fn=randomization_fn,
+        dr_train_ratio=cfg.dr_train_ratio,
+        seed=cfg.seed,
+        use_wandb=cfg.use_wandb,
+        beta=cfg.beta,
+    )
+    return train_fn(environment=env)
+
+
 def train_m2td3(cfg, randomization_fn, env, eval_env=None):
     m2td3_params = _td3_config(cfg.task)
     m2td3_params.omega_distance_threshold = 0.1
@@ -494,6 +549,8 @@ def train_gmmtd3(cfg, randomization_fn, env, eval_env=None):
         seed=cfg.seed,
         eval_with_training_env=cfg.eval_with_training_env,
         value_obs_key=gmmtd3_params.network_factory.value_obs_key,
+        dr_augmented_critic=_cfg_flag(cfg, "dr_augmented_critic"),
+        beta=cfg.beta,
     )
     return train_fn(environment=env)
 
@@ -645,22 +702,23 @@ def train(cfg):
     shutil.copy("config.yaml", os.path.join(cfg_dir, "config.yaml"))
 
     env_cfg = registry.get_default_config(cfg.task)
-    env_cfg["impl"] = cfg.impl
-    if cfg.policy == "td3":
-        if "stand" in cfg.task:
-            env_cfg.reward_config.scales.energy = -5e-5
-            env_cfg.reward_config.scales.action_rate = -1e-1
-            env_cfg.reward_config.scales.torques = -1e-3
-        elif "T1" in cfg.task or "G1" in cfg.task:
-            env_cfg.reward_config.scales.energy = -5e-5
-            env_cfg.reward_config.scales.action_rate = -1e-1
-            env_cfg.reward_config.scales.torques = -1e-3
-            env_cfg.reward_config.scales.pose = -1.0
-            env_cfg.reward_config.scales.tracking_ang_vel = 1.25
-            env_cfg.reward_config.scales.tracking_lin_vel = 1.25
-            env_cfg.reward_config.scales.feet_phase = 1.0
-            env_cfg.reward_config.scales.ang_vel_xy = -0.3
-            env_cfg.reward_config.scales.orientation = -5.0
+    env_cfg["impl"] = _resolve_impl(cfg.impl)
+    fast_td3_tuned_reward_tasks = {
+        "G1JoystickFlatTerrain",
+        "G1JoystickRoughTerrain",
+        "T1JoystickFlatTerrain",
+        "T1JoystickRoughTerrain",
+    }
+    if cfg.use_tuned_reward and cfg.task in fast_td3_tuned_reward_tasks:
+        env_cfg.reward_config.scales.energy = -5e-5
+        env_cfg.reward_config.scales.action_rate = -1e-1
+        env_cfg.reward_config.scales.torques = -1e-3
+        env_cfg.reward_config.scales.pose = -1.0
+        env_cfg.reward_config.scales.tracking_ang_vel = 1.25
+        env_cfg.reward_config.scales.tracking_lin_vel = 1.25
+        env_cfg.reward_config.scales.feet_phase = 1.0
+        env_cfg.reward_config.scales.ang_vel_xy = -0.3
+        env_cfg.reward_config.scales.orientation = -5.0
 
     env = registry.load(cfg.task, config=env_cfg)
     randomization_fn = (

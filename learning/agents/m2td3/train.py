@@ -165,7 +165,12 @@ def _init_training_state(
       omega_prob=omega_prob,
       active_omega=active_omega,
       normalizer_params=normalizer_params,
-      noise_scales= jax.random.normal(key_noise, (num_envs//local_devices_to_use//jax.process_count(), )) *(std_max - std_min) + std_min,
+      noise_scales=jax.random.uniform(
+          key_noise,
+          (num_envs // local_devices_to_use // jax.process_count(),),
+          minval=std_min,
+          maxval=std_max,
+      ),
   )
   return _replicate_across_devices(training_state, local_devices_to_use)
 
@@ -372,9 +377,6 @@ def train(
         optimizer_state=training_state.q_optimizer_state,
     )
 
-    new_gradient_steps = training_state.gradient_steps + 1
-    should_update_actor = _uint64_mod(new_gradient_steps, policy_frequency) == 0
-
     def polyak_update(target_params, params):
       return jax.tree_util.tree_map(
           lambda x, y: x * (1 - tau) + y * tau,
@@ -382,7 +384,11 @@ def train(
           params,
       )
 
-    def update_actor_omega_and_targets(_):
+    new_gradient_steps = training_state.gradient_steps + 1
+    should_update_actor = _uint64_mod(new_gradient_steps, policy_frequency) == 0
+    new_target_q_params = polyak_update(training_state.target_q_params, q_params)
+
+    def update_actor_and_omega(_):
       (
           omega_loss,
           (worst_omega_idx, worst_policy_loss),
@@ -407,7 +413,6 @@ def train(
           optimizer_state=training_state.policy_optimizer_state,
       )
       omega_prob = update_omega_prob(training_state.omega_prob, worst_omega_idx)
-      new_target_q_params = polyak_update(training_state.target_q_params, q_params)
       return (
           actor_loss,
           omega_loss,
@@ -417,10 +422,9 @@ def train(
           omega_params,
           omega_optimizer_state,
           omega_prob,
-          new_target_q_params,
       )
 
-    def skip_actor_omega_and_targets(_):
+    def skip_actor_and_omega(_):
       return (
           jnp.zeros_like(critic_loss),
           jnp.zeros_like(critic_loss),
@@ -430,7 +434,6 @@ def train(
           training_state.omega_params,
           training_state.omega_optimizer_state,
           training_state.omega_prob,
-          training_state.target_q_params,
       )
 
     (
@@ -442,11 +445,10 @@ def train(
         omega_params,
         omega_optimizer_state,
         omega_prob,
-        new_target_q_params,
     ) = jax.lax.cond(
         should_update_actor,
-        update_actor_omega_and_targets,
-        skip_actor_omega_and_targets,
+        update_actor_and_omega,
+        skip_actor_and_omega,
         operand=None,
     )
 
@@ -529,8 +531,16 @@ def train(
         transitions.observation,
         pmap_axis_name=_PMAP_AXIS_NAME,
     )
-    noise_scales = (1-env_state.done)* noise_scales + \
-          env_state.done* (jax.random.normal(noise_key, shape=noise_scales.shape) *(std_max - std_min) + std_min)
+    noise_scales = (
+        (1 - env_state.done) * noise_scales
+        + env_state.done
+        * jax.random.uniform(
+            noise_key,
+            shape=noise_scales.shape,
+            minval=std_min,
+            maxval=std_max,
+        )
+    )
 
     simul_info ={
       "simul/reward_mean" : transitions.reward.mean(),

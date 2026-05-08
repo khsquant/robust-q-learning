@@ -1,0 +1,16 @@
+- task=LeapCubeRotateZAxis
+- policy=td3
+- use_wandb=false
+- save_video=false
+- save_agent=false
+- save_csv=false
+- comment=_smoke_tiny
+- randomization=false
+- eval_randomization=false
+- +num_timesteps=32
+- +num_evals=1
+- +num_envs=1
+- +batch_size=8
+- +grad_updates_per_step=1
+- +min_replay_size=1
+- +max_replay_size=32

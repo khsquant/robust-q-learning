@@ -1,0 +1,41 @@
+[2026-05-08 16:40:30,779][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:41:59,323][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:44:04,355][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:44:04,879][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:44:07,242][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:44:18,516][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:45:11,341][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:45:11,896][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:45:14,280][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:45:25,490][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:46:38,521][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:46:39,049][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:46:41,423][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:47:03,864][absl][INFO] - replay size after prefill 40
+[2026-05-08 16:47:03,920][absl][INFO] - step 0
+[2026-05-08 16:47:37,104][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:47:37,644][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:47:40,015][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:48:02,546][absl][INFO] - replay size after prefill 40
+[2026-05-08 16:48:02,588][absl][INFO] - step 0
+[2026-05-08 16:48:47,456][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:48:47,954][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:48:50,255][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:49:48,690][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:49:49,237][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:49:51,614][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:50:14,382][absl][INFO] - replay size after prefill 40
+[2026-05-08 16:50:14,445][absl][INFO] - step 0
+[2026-05-08 16:50:27,168][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:51:37,096][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:51:37,622][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:51:39,970][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:52:02,828][absl][INFO] - replay size after prefill 40
+[2026-05-08 16:52:02,884][absl][INFO] - step 0
+[2026-05-08 16:52:15,692][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:53:20,198][absl][INFO] - local_device_count: 1; total_device_count: 1
+[2026-05-08 16:53:20,726][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:53:23,098][root][INFO] - Using JAX default device: cpu:0.
+[2026-05-08 16:53:45,303][absl][INFO] - replay size after prefill 1
+[2026-05-08 16:53:45,329][absl][INFO] - step 0
+[2026-05-08 16:53:56,972][root][INFO] - Using JAX default device: cpu:0.

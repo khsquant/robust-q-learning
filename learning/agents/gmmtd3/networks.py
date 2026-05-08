@@ -66,6 +66,7 @@ def make_gmmtd3_networks(
     num_envs :int, 
     batch_size : int,
     init_key :jax.random.PRNGKey,
+    param_size: int = 0,
     preprocess_observations_fn: types.PreprocessObservationFn = types.identity_observation_preprocessor,
     hidden_layer_sizes: Sequence[int] = (256, 256),
     activation: networks.ActivationFn = linen.relu,
@@ -78,6 +79,7 @@ def make_gmmtd3_networks(
     num_atoms: int = 101,
     v_min: float = 0.,
     v_max: float = 0.,
+    dr_augmented_critic: bool = False,
 ) -> GMMTd3Networks:
   """Make td3 networks."""
 
@@ -90,15 +92,28 @@ def make_gmmtd3_networks(
       layer_norm=policy_network_layer_norm,
       obs_key = policy_obs_key
   )
-  q_network = networks.make_q_network(
-      observation_size,
-      action_size,
-      preprocess_observations_fn=preprocess_observations_fn,
-      hidden_layer_sizes=hidden_layer_sizes,
-      activation=activation,
-      layer_norm=q_network_layer_norm,
-      obs_key = value_obs_key,
-  )
+  del distributional_q, num_atoms, v_min, v_max
+  if dr_augmented_critic:
+    q_network = networks.make_augmented_q_network(
+        observation_size,
+        action_size,
+        param_size or dynamics_param_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key=value_obs_key,
+    )
+  else:
+    q_network = networks.make_q_network(
+        observation_size,
+        action_size,
+        preprocess_observations_fn=preprocess_observations_fn,
+        hidden_layer_sizes=hidden_layer_sizes,
+        activation=activation,
+        layer_norm=q_network_layer_norm,
+        obs_key=value_obs_key,
+    )
   init_gmmvi_state, gmm_network = create_gmm_network_and_state(dynamics_param_size, num_envs, batch_size, init_key,\
                                                                 bound_info=bound_info)
   return GMMTd3Networks(

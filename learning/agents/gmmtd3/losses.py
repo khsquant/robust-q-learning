@@ -38,6 +38,7 @@ def make_losses(
     reward_scaling: float,
     discounting: float,
     action_size: int,
+    dr_augmented_critic: bool = False,
 ):
   """Creates the td3 losses."""
 
@@ -45,6 +46,14 @@ def make_losses(
   policy_network = gmmtd3_network.policy_network
   q_network = gmmtd3_network.q_network
   gmm_network = gmmtd3_network.gmm_network
+
+  def _q_apply(normalizer_params, q_params, observation, action, dynamics_params):
+    if dr_augmented_critic:
+      return q_network.apply(
+          normalizer_params, q_params, observation, action, dynamics_params
+      )
+    return q_network.apply(normalizer_params, q_params, observation, action)
+
   def critic_loss(
       q_params: Params,
       policy_params: Params,
@@ -54,18 +63,23 @@ def make_losses(
       noise: jnp.ndarray,
       key: PRNGKey,
   ) -> jnp.ndarray:
-    q_old_action = q_network.apply(
-        normalizer_params, q_params, transitions.observation, transitions.action
+    q_old_action = _q_apply(
+        normalizer_params,
+        q_params,
+        transitions.observation,
+        transitions.action,
+        transitions.dynamics_params,
     )
     next_action = policy_network.apply(
         normalizer_params, policy_params, transitions.next_observation
     )
     next_action = jnp.clip(next_action + noise, -1.0, 1.0)
-    next_q = q_network.apply(
+    next_q = _q_apply(
         normalizer_params,
         target_q_params,
         transitions.next_observation,
         next_action,
+        transitions.dynamics_params,
     )
     next_v = jnp.min(next_q, axis=-1) 
     target_q = jax.lax.stop_gradient(
@@ -91,8 +105,12 @@ def make_losses(
     action = policy_network.apply(
         normalizer_params, policy_params, transitions.observation
     )
-    q_action = q_network.apply(
-        normalizer_params, q_params, transitions.observation, action
+    q_action = _q_apply(
+        normalizer_params,
+        q_params,
+        transitions.observation,
+        action,
+        transitions.dynamics_params,
     )
     min_q = jnp.min(q_action, axis=-1)
     return -jnp.mean(min_q)
@@ -134,4 +152,3 @@ def make_losses(
                         weight_stepsize=gmmvi_state.weight_stepsize)
 
   return critic_loss, actor_loss, gmm_update
-

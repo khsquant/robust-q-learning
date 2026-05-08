@@ -141,7 +141,12 @@ def _init_training_state(
       gradient_steps=types.UInt64(hi=0, lo=0),
       env_steps=types.UInt64(hi=0, lo=0),
       normalizer_params=normalizer_params,
-      noise_scales= jax.random.normal(key_noise, (num_envs//local_devices_to_use//jax.process_count(), )) *(std_max - std_min) + std_min,
+      noise_scales=jax.random.uniform(
+          key_noise,
+          (num_envs // local_devices_to_use // jax.process_count(),),
+          minval=std_min,
+          maxval=std_max,
+      ),
   )
   return _replicate_across_devices(training_state, local_devices_to_use)
 
@@ -235,29 +240,34 @@ def train(
   rng, key = jax.random.split(rng)
   evaluation_randomization_fn = eval_randomization_fn or randomization_fn
   
-  if hasattr(env,'dr_range') :
+  if randomization_fn is not None:
+    if not hasattr(env, 'dr_range'):
+      raise ValueError(
+          'TD3 domain randomization requires an environment with dr_range.'
+      )
     dr_range_low, dr_range_high = env.dr_range
     dr_mid = (dr_range_low + dr_range_high) / 2.
     dr_scale = (dr_range_high - dr_range_low) / 2.
-    training_dr_range = (dr_mid - dr_train_ratio*dr_scale, dr_mid + dr_train_ratio*dr_scale)
-  else:
-    training_dr_range = None
-  training_randomization_fn = None
-
-  if training_dr_range is None:
-    raise ValueError(
-        'TD3 domain randomization requires an environment with dr_range.'
+    training_dr_range = (
+        dr_mid - dr_train_ratio * dr_scale,
+        dr_mid + dr_train_ratio * dr_scale,
     )
-  training_randomization_fn = functools.partial(
+    training_randomization_fn = functools.partial(
         randomization_fn,
         dr_range=training_dr_range,
     )
+  else:
+    dr_range_low = jnp.zeros((0,), dtype=jnp.float32)
+    dr_range_high = jnp.zeros((0,), dtype=jnp.float32)
+    training_randomization_fn = None
+
+  param_size = len(dr_range_low)
   env = wrap_for_adv_training(
     env,
     episode_length=episode_length,
     action_repeat=action_repeat,
     randomization_fn=training_randomization_fn,
-    param_size=len(dr_range_low),
+    param_size=param_size,
     dr_range_low=dr_range_low,
     dr_range_high=dr_range_high,
   )
@@ -276,8 +286,9 @@ def train(
   td3_network, q_support = network_factory(
       observation_size=obs_shape,
       action_size=action_size,
-      param_size=len(dr_range_low),
+      param_size=param_size,
       preprocess_observations_fn=normalize_fn,
+      distributional_q=distributional_q,
       dr_augmented_critic=dr_augmented_critic,
   )
   make_policy = td3_networks.make_inference_fn(td3_network)
@@ -289,15 +300,20 @@ def train(
   dummy_obs = { key: jnp.zeros(obs_shape[key]) for key in obs_shape } if isinstance(obs_shape, dict) else jnp.zeros((obs_shape,))
   print("dummy_obs", dummy_obs)
   dummy_action = jnp.zeros((action_size,))
+  dummy_q_values = (
+      jnp.zeros((q_support.shape[0],), dtype=jnp.float32)
+      if distributional_q
+      else jnp.zeros((2,), dtype=jnp.float32)
+  )
   dummy_transition = TransitionwithCritic(  # pytype: disable=wrong-arg-types  # jax-ndarray
       observation=dummy_obs,
       action=dummy_action,
       reward=0.0,
       discount=0.0,
       next_observation=dummy_obs,
-      dynamics_params=jnp.zeros((len(dr_range_low),), dtype=jnp.float32),
-      q_values=0.,
-      target_lnpdf=0.,
+      dynamics_params=jnp.zeros((param_size,), dtype=jnp.float32),
+      q_values=dummy_q_values,
+      target_lnpdf=dummy_q_values,
       extras={'state_extras': {'truncation': 0.0}, 'policy_extras': {}},
   )
   replay_buffer = replay_buffers.UniformSamplingQueue(
@@ -358,7 +374,9 @@ def train(
           params,
       )
 
-    def update_actor_and_targets(_):
+    new_target_q_params = polyak_update(training_state.target_q_params, q_params)
+
+    def update_actor(_):
       actor_loss, policy_params, policy_optimizer_state = actor_update(
           training_state.policy_params,
           training_state.normalizer_params,
@@ -367,20 +385,17 @@ def train(
           key_actor,
           optimizer_state=training_state.policy_optimizer_state,
       )
-      new_target_q_params = polyak_update(training_state.target_q_params, q_params)
       return (
           actor_loss,
           policy_params,
           policy_optimizer_state,
-          new_target_q_params,
       )
 
-    def skip_actor_and_targets(_):
+    def skip_actor(_):
       return (
           jnp.zeros_like(critic_loss),
           training_state.policy_params,
           training_state.policy_optimizer_state,
-          training_state.target_q_params,
       )
 
     new_gradient_steps = training_state.gradient_steps + 1
@@ -389,11 +404,10 @@ def train(
         actor_loss,
         policy_params,
         policy_optimizer_state,
-        new_target_q_params,
     ) = jax.lax.cond(
         should_update_actor,
-        update_actor_and_targets,
-        skip_actor_and_targets,
+        update_actor,
+        skip_actor,
         operand=None,
     )
 
@@ -482,8 +496,16 @@ def train(
         transitions.observation,
         pmap_axis_name=_PMAP_AXIS_NAME,
     )
-    noise_scales = (1-env_state.done)* noise_scales + \
-          env_state.done * (jax.random.normal(noise_key, shape=noise_scales.shape) *(std_max - std_min) + std_min)
+    noise_scales = (
+        (1 - env_state.done) * noise_scales
+        + env_state.done
+        * jax.random.uniform(
+            noise_key,
+            shape=noise_scales.shape,
+            minval=std_min,
+            maxval=std_max,
+        )
+    )
     q_values = transitions.q_values
     # dynamics_params = jax.random.uniform(key=jax.random.PRNGKey(seed), shape=(noise_scales.shape[0],len(dr_range_low)), minval=dr_range_low, maxval=dr_range_high)
     simul_info ={
@@ -544,8 +566,11 @@ def train(
     buffer_state, transitions = replay_buffer.sample(buffer_state)
     # Change the front dimension of transitions so 'update_step' is called
     # grad_updates_per_step times by the scan.
+    per_update_batch_size = batch_size // device_count
     transitions = jax.tree_util.tree_map(
-        lambda x: jnp.reshape(x, (grad_updates_per_step, -1) + x.shape[1:]),
+        lambda x: jnp.reshape(
+            x, (grad_updates_per_step, per_update_batch_size) + x.shape[1:]
+        ),
         transitions,
     )
     (training_state, _), metrics = jax.lax.scan(
@@ -740,44 +765,37 @@ def train(
   )
 
   eval_env = copy.deepcopy(environment)
-  if evaluation_randomization_fn is not None and hasattr(environment, 'dr_range'):
+  eval_dr_low, eval_dr_high = dr_range_low, dr_range_high
+  eval_randomization_wrapper_fn = None
+  if evaluation_randomization_fn is not None:
+    if not hasattr(environment, 'dr_range'):
+      raise ValueError(
+          'TD3 evaluation randomization requires an environment with dr_range.'
+      )
     eval_dr_low, eval_dr_high = environment.dr_range
-    eval_env = wrap_for_adv_training(
-        eval_env,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        randomization_fn=functools.partial(
-            evaluation_randomization_fn,
-            dr_range=environment.dr_range,
-        ),
-        param_size=len(eval_dr_low),
-        dr_range_low=eval_dr_low,
-        dr_range_high=eval_dr_high,
+    eval_randomization_wrapper_fn = functools.partial(
+        evaluation_randomization_fn,
+        dr_range=environment.dr_range,
     )
-    evaluator = AdvEvaluator(
-        eval_env,
-        functools.partial(make_policy, deterministic=True),
-        num_eval_envs=num_eval_envs,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        key=eval_key,
-        dr_range_low=eval_dr_low,
-        dr_range_high=eval_dr_high,
-    )
-  else:
-    eval_env = envs.training.wrap(
-        eval_env,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-    )
-    evaluator = Evaluator(
-        eval_env,
-        functools.partial(make_policy, deterministic=True),
-        num_eval_envs=num_eval_envs,
-        episode_length=episode_length,
-        action_repeat=action_repeat,
-        key=eval_key,
-    )
+  eval_env = wrap_for_adv_training(
+      eval_env,
+      episode_length=episode_length,
+      action_repeat=action_repeat,
+      randomization_fn=eval_randomization_wrapper_fn,
+      param_size=param_size,
+      dr_range_low=eval_dr_low,
+      dr_range_high=eval_dr_high,
+  )
+  evaluator = AdvEvaluator(
+      eval_env,
+      functools.partial(make_policy, deterministic=True),
+      num_eval_envs=num_eval_envs,
+      episode_length=episode_length,
+      action_repeat=action_repeat,
+      key=eval_key,
+      dr_range_low=eval_dr_low,
+      dr_range_high=eval_dr_high,
+  )
 
   # Run initial eval
   metrics = {}

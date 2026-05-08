@@ -12,13 +12,14 @@ eval_episodes: 1
 eval_pi: true
 eval_value: true # evaluate value function approximation
 eval_freq: 50000
-impl : warp #or mjx
+impl : warp # valid: warp, jax, cpp
 eval_with_training_env : false #used by gmmtd3
 #policy
 policy : td3
 asymmetric_critic: true
 dr_augmented_critic: true
-distributional_q : false
+distributional_q : true
+use_tuned_reward: false
 
 #dynamics shift
 randomization: true
@@ -77,6 +78,10 @@ simba : false
 #m2td3
 omega_distance_threshold: 0.1
 
+#gmmtd3
+beta: 1.0
+
 #TCRMDP
 radius: 0.001
+rarl_range_scale: 0.5
 omniscient_adversary: true

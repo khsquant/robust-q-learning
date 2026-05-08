@@ -151,13 +151,11 @@ def _init_training_state(
       gradient_steps=types.UInt64(hi=0, lo=0),
       env_steps=types.UInt64(hi=0, lo=0),
       normalizer_params=running_statistics.init_state(obs_size),
-      noise_scales=(
-          jax.random.normal(
-              key_noise,
-              (num_envs // local_devices_to_use // jax.process_count(),),
-          )
-          * (std_max - std_min)
-          + std_min
+      noise_scales=jax.random.uniform(
+          key_noise,
+          (num_envs // local_devices_to_use // jax.process_count(),),
+          minval=std_min,
+          maxval=std_max,
       ),
   )
   def replicate(x):
@@ -205,6 +203,7 @@ def train(
     noise_clip: float = 0.5,
     policy_frequency: int = 2,
     radius: float = 0.001,
+    rarl_range_scale: float = 0.5,
     omniscient_adversary: bool = True,
     asymmetric_critic: bool = True,
     dr_augmented_critic: bool = False,
@@ -468,6 +467,16 @@ def train(
       adversary_q_params = training_state.adversary_q_params
       adversary_q_optimizer_state = training_state.adversary_q_optimizer_state
 
+    new_target_agent_q_params = polyak_update(
+        training_state.target_agent_q_params, agent_q_params
+    )
+    if algorithm in (tcrmdp_networks.RARL, tcrmdp_networks.TC_RARL):
+      new_target_adversary_q_params = polyak_update(
+          training_state.target_adversary_q_params, adversary_q_params
+      )
+    else:
+      new_target_adversary_q_params = training_state.target_adversary_q_params
+
     def update_actors_and_targets(_):
       agent_actor_loss_value, agent_policy_params, agent_policy_optimizer_state = (
           agent_actor_update(
@@ -492,9 +501,6 @@ def train(
             key_adv_actor,
             optimizer_state=training_state.adversary_policy_optimizer_state,
         )
-        target_adversary_q_params = polyak_update(
-            training_state.target_adversary_q_params, adversary_q_params
-        )
       else:
         (
             adversary_actor_loss_value,
@@ -508,7 +514,6 @@ def train(
             key_adv_actor,
             optimizer_state=training_state.adversary_policy_optimizer_state,
         )
-        target_adversary_q_params = training_state.target_adversary_q_params
 
       return (
           agent_actor_loss_value,
@@ -516,14 +521,12 @@ def train(
           agent_policy_params,
           agent_policy_optimizer_state,
           polyak_update(training_state.target_agent_policy_params, agent_policy_params),
-          polyak_update(training_state.target_agent_q_params, agent_q_params),
           adversary_policy_params,
           adversary_policy_optimizer_state,
           polyak_update(
               training_state.target_adversary_policy_params,
               adversary_policy_params,
           ),
-          target_adversary_q_params,
       )
 
     def skip_actors_and_targets(_):
@@ -533,11 +536,9 @@ def train(
           training_state.agent_policy_params,
           training_state.agent_policy_optimizer_state,
           training_state.target_agent_policy_params,
-          training_state.target_agent_q_params,
           training_state.adversary_policy_params,
           training_state.adversary_policy_optimizer_state,
           training_state.target_adversary_policy_params,
-          training_state.target_adversary_q_params,
       )
 
     new_gradient_steps = training_state.gradient_steps + 1
@@ -548,11 +549,9 @@ def train(
         agent_policy_params,
         agent_policy_optimizer_state,
         target_agent_policy_params,
-        target_agent_q_params,
         adversary_policy_params,
         adversary_policy_optimizer_state,
         target_adversary_policy_params,
-        target_adversary_q_params,
     ) = jax.lax.cond(
         should_update_actor,
         update_actors_and_targets,
@@ -577,13 +576,13 @@ def train(
         target_agent_policy_params=target_agent_policy_params,
         agent_q_optimizer_state=agent_q_optimizer_state,
         agent_q_params=agent_q_params,
-        target_agent_q_params=target_agent_q_params,
+        target_agent_q_params=new_target_agent_q_params,
         adversary_policy_optimizer_state=adversary_policy_optimizer_state,
         adversary_policy_params=adversary_policy_params,
         target_adversary_policy_params=target_adversary_policy_params,
         adversary_q_optimizer_state=adversary_q_optimizer_state,
         adversary_q_params=adversary_q_params,
-        target_adversary_q_params=target_adversary_q_params,
+        target_adversary_q_params=new_target_adversary_q_params,
         gradient_steps=new_gradient_steps,
     )
     return (new_training_state, key), metrics
@@ -672,7 +671,12 @@ def train(
       )
 
     if algorithm == tcrmdp_networks.RARL:
-      next_params = common.action_to_params(adv_actions, dr_low, dr_high)
+      next_params = common.action_to_params(
+          adv_actions,
+          dr_low,
+          dr_high,
+          scale=rarl_range_scale,
+      )
     else:
       next_params = common.update_params(
           current_params, adv_actions, dr_low, dr_high, radius
@@ -735,9 +739,12 @@ def train(
         (1 - next_env_state.done) * training_state.noise_scales
         + next_env_state.done
         * (
-            jax.random.normal(noise_key, shape=training_state.noise_scales.shape)
-            * (std_max - std_min)
-            + std_min
+            jax.random.uniform(
+                noise_key,
+                shape=training_state.noise_scales.shape,
+                minval=std_min,
+                maxval=std_max,
+            )
         )
     )
     buffer_state = replay_buffer.insert(buffer_state, transition)

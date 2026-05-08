@@ -9,7 +9,7 @@ set -euo pipefail
 #   bash commands/whole_sweeps.sh 0
 #   DRY_RUN=true bash commands/whole_sweeps.sh 0
 #   SMOKE=true USE_WANDB=false SEEDS="1" bash commands/whole_sweeps.sh 0
-#   POLICIES="td3 m2td3" bash commands/whole_sweeps.sh 0
+#   POLICIES="td3 gmmtd3 m2td3" bash commands/whole_sweeps.sh 0
 #   POLICIES="rarl vanilla_tc_m2td3 tc_rarl tc_m2td3" bash commands/whole_sweeps.sh 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +36,8 @@ CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-false}"
 EXTRA_OVERRIDES="${EXTRA_OVERRIDES:-}"
 
 DEFAULT_POLICIES=(
-  td3
+  # td3
+  gmmtd3
   # m2td3
   rarl
   vanilla_tc_m2td3
@@ -48,49 +49,64 @@ DEFAULT_POLICIES=(
 #
 # Edit these arrays to change the sweep. Values are plain shell words; keep
 # labels short because they are used in W&B groups and run names.
+# Keep dr_train_ratio at the default from learning/config.yaml (1.0); do not
+# add it to sweep labels or overrides here.
 
 TD3_SWEEPS=(
   "default|default|"
-  # "fixed_explore010|std_min-0_1_std_max-0_1_policy_noise-0_1_noise_clip-0_5_policy_frequency-2|++std_min=0.1 ++std_max=0.1 ++policy_noise=0.1 ++noise_clip=0.5 ++policy_frequency=2"
-  # "range_explore040|std_min-0_01_std_max-0_4_policy_noise-0_2_noise_clip-0_5_policy_frequency-2|++std_min=0.01 ++std_max=0.4 ++policy_noise=0.2 ++noise_clip=0.5 ++policy_frequency=2"
-  # "actor_every_step|std_min-0_1_std_max-0_1_policy_noise-0_2_noise_clip-0_5_policy_frequency-1|++std_min=0.1 ++std_max=0.1 ++policy_noise=0.2 ++noise_clip=0.5 ++policy_frequency=1"
+  "fixed_explore010|std_min-0_1_std_max-0_1_policy_noise-0_1_noise_clip-0_3_policy_frequency-2|++std_min=0.1 ++std_max=0.1 ++policy_noise=0.1 ++noise_clip=0.3 ++policy_frequency=2"
+  "wide_explore020|std_min-0_05_std_max-0_2_policy_noise-0_2_noise_clip-0_5_policy_frequency-2|++std_min=0.05 ++std_max=0.2 ++policy_noise=0.2 ++noise_clip=0.5 ++policy_frequency=2"
+  "actor_every_step|std_min-0_1_std_max-0_1_policy_noise-0_1_noise_clip-0_3_policy_frequency-1|++std_min=0.1 ++std_max=0.1 ++policy_noise=0.1 ++noise_clip=0.3 ++policy_frequency=1"
+)
+
+GMMTD3_SWEEPS=(
+  "beta000|beta-0|beta=0.0"
+  "beta10000|beta-10|beta=-10.0"
+  "beta20000|beta-20|beta=-20.0"
 )
 
 M2TD3_SWEEPS=(
   # Keep this first: before tuning M2TD3, compare this zeroed M2-specific
   # baseline against td3/default to check whether M2TD3 reaches TD3 performance.
   # "zero_td3_check|td3_check_num_omegas-1_omega_distance_threshold-0_0_omega_noise_rate-0_0_omega_clip-0_0_omega_std-0_0_omega_lr-0_0_policy_frequency-2|++num_omegas=1 ++omega_distance_threshold=0.0 ++omega_noise_rate=0.0 ++omega_clip=0.0 ++omega_std=0.0 ++omega_lr=0.0 ++policy_frequency=2"
-  "omega005_k5|omega_distance_threshold-0_05_num_omegas-5_omega_noise_rate-0_2_omega_clip-0_5_omega_std-1_0|++omega_distance_threshold=0.05 ++num_omegas=5"
-  "omega010_k5|omega_distance_threshold-0_1_num_omegas-5_omega_noise_rate-0_2_omega_clip-0_5_omega_std-1_0|++omega_distance_threshold=0.1 ++num_omegas=5"
-  "omega010_k10|omega_distance_threshold-0_1_num_omegas-10_omega_noise_rate-0_2_omega_clip-0_5_omega_std-1_0|++omega_distance_threshold=0.1 ++num_omegas=10"
-  "omega005_k10_low_noise|omega_distance_threshold-0_05_num_omegas-10_omega_noise_rate-0_05_omega_clip-0_25_omega_std-0_25|++omega_distance_threshold=0.05 ++num_omegas=10 ++omega_noise_rate=0.05 ++omega_clip=0.25 ++omega_std=0.25"
+  "omega010_k5|omega_distance_threshold-0_1_num_omegas-5|++omega_distance_threshold=0.1 ++num_omegas=5"
+  "omega005_k5|omega_distance_threshold-0_05_num_omegas-5|++omega_distance_threshold=0.05 ++num_omegas=5"
+  "omega015_k5|omega_distance_threshold-0_15_num_omegas-5|++omega_distance_threshold=0.15 ++num_omegas=5"
+  "omega010_k3|omega_distance_threshold-0_1_num_omegas-3|++omega_distance_threshold=0.1 ++num_omegas=3"
+  "omega010_k10|omega_distance_threshold-0_1_num_omegas-10|++omega_distance_threshold=0.1 ++num_omegas=10"
 )
 
 RARL_SWEEPS=(
-  "omniscient_false_dr100|omniscient_adversary-false_dr_train_ratio-1_0|omniscient_adversary=false dr_train_ratio=1.0"
-  "omniscient_true_dr100|omniscient_adversary-true_dr_train_ratio-1_0|omniscient_adversary=true dr_train_ratio=1.0"
-  "omniscient_true_dr050|omniscient_adversary-true_dr_train_ratio-0_5|omniscient_adversary=true dr_train_ratio=0.5"
+  "omniscient_false_scale005|omniscient_adversary-false_rarl_range_scale-0_05|omniscient_adversary=false rarl_range_scale=0.05"
+  "omniscient_false_scale010|omniscient_adversary-false_rarl_range_scale-0_10|omniscient_adversary=false rarl_range_scale=0.10"
+  "omniscient_false_scale020|omniscient_adversary-false_rarl_range_scale-0_20|omniscient_adversary=false rarl_range_scale=0.2"
+  "omniscient_true_scale005|omniscient_adversary-true_rarl_range_scale-0_05|omniscient_adversary=true rarl_range_scale=0.05"
+  "omniscient_true_scale010|omniscient_adversary-true_rarl_range_scale-0_10|omniscient_adversary=true rarl_range_scale=0.1"
+  "omniscient_true_scale020|omniscient_adversary-true_rarl_range_scale-0_20|omniscient_adversary=true rarl_range_scale=0.2"
 )
 
 TC_RARL_SWEEPS=(
+  "radius00025|radius-0_00025|radius=0.00025"
   "radius0005|radius-0_0005|radius=0.0005"
   "radius0010|radius-0_001|radius=0.001"
   "radius0020|radius-0_002|radius=0.002"
-  "radius0010_dr050|radius-0_001_dr_train_ratio-0_5|radius=0.001 dr_train_ratio=0.5"
+  "radius0040|radius-0_004|radius=0.004"
 )
 
 VANILLA_TC_M2TD3_SWEEPS=(
+  "radius00025|radius-0_00025|radius=0.00025"
   "radius0005|radius-0_0005|radius=0.0005"
   "radius0010|radius-0_001|radius=0.001"
   "radius0020|radius-0_002|radius=0.002"
-  "radius0010_dr050|radius-0_001_dr_train_ratio-0_5|radius=0.001 dr_train_ratio=0.5"
+  "radius0040|radius-0_004|radius=0.004"
 )
 
 TC_M2TD3_SWEEPS=(
+  "radius00025|radius-0_00025|radius=0.00025"
   "radius0005|radius-0_0005|radius=0.0005"
   "radius0010|radius-0_001|radius=0.001"
   "radius0020|radius-0_002|radius=0.002"
-  "radius0010_dr050|radius-0_001_dr_train_ratio-0_5|radius=0.001 dr_train_ratio=0.5"
+  "radius0040|radius-0_004|radius=0.004"
 )
 
 SMOKE_OVERRIDES=()
@@ -222,6 +238,9 @@ run_policy_sweep() {
   case "${policy}" in
     td3)
       run_sweep_entries td3 "${TD3_SWEEPS[@]}"
+      ;;
+    gmmtd3)
+      run_sweep_entries gmmtd3 "${GMMTD3_SWEEPS[@]}"
       ;;
     # m2td3)
     #   run_sweep_entries m2td3 "${M2TD3_SWEEPS[@]}"

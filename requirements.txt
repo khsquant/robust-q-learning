@@ -16,7 +16,8 @@ imageio
 distrax
 blackjax
 hydra-core
-numpyro
+# NumPyro 0.20.1 breaks on JAX 0.10.0 (`xla_pmap_p` import); 0.21.0 fixes it.
+numpyro>=0.21.0
 mergedeep
 einops
 warp-lang>=1.11
