@@ -172,9 +172,11 @@ def make_losses(
         policy_params,
         _obs("adv_state", transitions.adv_observation),
     )
-    proposed_params = common.update_params(
-        transitions.dynamics_params, adv_action, dr_low, dr_high, radius
-    )
+    # Match the official vanilla TC-M2TD3 implementation: the adversary is
+    # optimized against the agent critic using its direct output as the
+    # critic-side psi/parameter input, rather than first applying the
+    # environment's clipped parameter update rule.
+    proposed_params = adv_action
     _, proposed_critic_obs, _ = common.build_observations(
         transitions.raw_observation,
         proposed_params,

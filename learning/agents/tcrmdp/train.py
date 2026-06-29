@@ -292,11 +292,7 @@ def train(
         env.action_size if omniscient_adversary else 0
     )
   else:
-    actor_obs_size = (
-        base_obs_size
-        if algorithm == tcrmdp_networks.VANILLA_TC_M2TD3
-        else base_obs_size + dynamics_param_size
-    )
+    actor_obs_size = base_obs_size
     if dr_augmented_critic:
       critic_obs_size = base_obs_size
     else:

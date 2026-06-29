@@ -21,10 +21,18 @@ for _path in (_REPO_ROOT, _THIS_DIR):
 
 import hydra
 import jax
+from ml_collections import config_dict
 import numpy as np
 import wandb
 from mujoco import mjx
 from omegaconf import OmegaConf
+
+try:
+    from agents.bridgetd3 import networks as bridgetd3_networks
+    from agents.bridgetd3 import train as bridgetd3
+except ImportError:
+    bridgetd3_networks = None
+    bridgetd3 = None
 
 try:
     from agents.gmmtd3 import networks as gmmtd3_networks
@@ -107,6 +115,7 @@ CAMERAS = {
 
 _WANDB_GROUP_LIMIT = 120
 _WANDB_GROUP_HASH_LENGTH = 8
+_TC_WANDB_POLICIES = frozenset({"tc_bridgetd3", "tc_gmmtd3"})
 
 
 def _limit_wandb_group(group: str) -> str:
@@ -125,6 +134,15 @@ def _limit_wandb_group(group: str) -> str:
         f"{len(group)} to {len(limited_group)} chars: {limited_group}"
     )
     return limited_group
+
+
+def _tc_prefixed(name: str) -> str:
+    name = str(name)
+    return name if name.startswith("tc_") else f"tc_{name}"
+
+
+def _uses_tc_wandb_prefix(policy: str) -> bool:
+    return policy in _TC_WANDB_POLICIES
 
 
 def _resolve_impl(requested_impl: str) -> str:
@@ -211,6 +229,13 @@ def _maybe_override_config(params, cfg):
         if param in cfg and not OmegaConf.is_missing(cfg, param):
             value = getattr(cfg, param)
             if value is not None:
+                if OmegaConf.is_config(value):
+                    value = OmegaConf.to_container(value, resolve=True)
+                if (
+                    isinstance(params[param], config_dict.ConfigDict)
+                    and isinstance(value, dict)
+                ):
+                    value = config_dict.ConfigDict(value)
                 params[param] = value
 
 
@@ -233,10 +258,13 @@ def _init_wandb(cfg, name: str):
         if cfg.wandb_group:
             group = cfg.wandb_group
         else:
-            group_parts = [cfg.task, cfg.policy, cfg.exp_name]
+            group_parts =  [name]
             if cfg.wandb_group_prefix:
                 group_parts.insert(0, cfg.wandb_group_prefix)
             group = ".".join(str(part) for part in group_parts if part)
+        if _uses_tc_wandb_prefix(cfg.policy):
+            name = _tc_prefixed(name)
+            group = _tc_prefixed(group)
         group = _limit_wandb_group(group)
         wandb_config = OmegaConf.to_container(cfg, resolve=True)
         wandb_config["wandb_group"] = group
@@ -299,6 +327,119 @@ def _cfg_flag(cfg, name: str, default: bool = False) -> bool:
             return default
         return bool(value)
     return default
+
+
+def _train_bridgetd3_variant(
+    cfg,
+    randomization_fn,
+    env,
+    eval_env=None,
+    *,
+    use_tc: bool = False,
+):
+    del eval_env
+    if bridgetd3 is None or bridgetd3_networks is None:
+        raise ImportError(
+            "bridgetd3 dependencies are not available in this environment."
+        )
+    bridgetd3_params = _td3_config(cfg.task)
+    bridgetd3_params.bridge_alpha = 1.0
+    bridgetd3_params.bridge_auto_alpha = True
+    bridgetd3_params.bridge_target_kinetic_coef = 2.5
+    bridgetd3_params.bridge_init_log_alpha = None
+    bridgetd3_params.bridge_alpha_lr = None
+    bridgetd3_params.adversary_learning_rate = None
+    bridgetd3_params.dr_augmented_critic = True
+    bridgetd3_params.use_tc = use_tc
+    bridgetd3_params.radius = 0.001
+    _maybe_override_config(bridgetd3_params, cfg)
+
+    wandb_name = (
+        f"{cfg.task}.{cfg.policy}.{cfg.seed}"
+        f".alpha={bridgetd3_params.bridge_alpha}.beta={cfg.beta}.radius={cfg.radius}"
+    )
+    _init_wandb(cfg, wandb_name)
+
+    bridgetd3_training_params = dict(bridgetd3_params)
+    network_factory = bridgetd3_networks.make_bridgetd3_networks
+    if "network_factory" in bridgetd3_params:
+        del bridgetd3_training_params["network_factory"]
+        if not cfg.asymmetric_critic:
+            bridgetd3_params.network_factory.value_obs_key = "state"
+        network_factory = functools.partial(
+            bridgetd3_networks.make_bridgetd3_networks,
+            **_filter_kwargs(
+                bridgetd3_networks.make_bridgetd3_networks,
+                bridgetd3_params.network_factory,
+            ),
+        )
+    bridgetd3_training_params = _filter_kwargs(
+        bridgetd3.train, bridgetd3_training_params
+    )
+
+    train_fn = functools.partial(
+        bridgetd3.train,
+        **dict(bridgetd3_training_params),
+        network_factory=network_factory,
+        progress_fn=functools.partial(progress_fn, use_wandb=cfg.use_wandb),
+        randomization_fn=_adv_randomizer(cfg.task, randomization_fn),
+        eval_randomization_fn=randomization_fn,
+        dr_train_ratio=cfg.dr_train_ratio,
+        seed=cfg.seed,
+        use_wandb=cfg.use_wandb,
+    )
+    return train_fn(environment=env)
+
+
+def _train_gmmtd3_variant(
+    cfg,
+    randomization_fn,
+    env,
+    eval_env=None,
+    *,
+    use_tc: bool = False,
+):
+    del eval_env
+    if gmmtd3 is None or gmmtd3_networks is None:
+        raise ImportError(
+            "gmmtd3 dependencies are not available in this environment."
+        ) from _GMM_TD3_IMPORT_ERROR
+    gmmtd3_params = _td3_config(cfg.task)
+    gmmtd3_params.use_tc = use_tc
+    gmmtd3_params.radius = 0.001
+    _maybe_override_config(gmmtd3_params, cfg)
+
+    wandb_name = f"{cfg.task}.{cfg.policy}.seed={cfg.seed}.beta={cfg.beta}.radius={cfg.radius}"
+    _init_wandb(cfg, wandb_name)
+
+    gmmtd3_training_params = dict(gmmtd3_params)
+    if "network_factory" in gmmtd3_params:
+        if not cfg.asymmetric_critic:
+            gmmtd3_params.network_factory.value_obs_key = "state"
+        del gmmtd3_training_params["network_factory"]
+        network_factory = functools.partial(
+            gmmtd3_networks.make_gmmtd3_networks,
+            **gmmtd3_params.network_factory,
+        )
+    else:
+        network_factory = gmmtd3_networks.make_gmmtd3_networks
+
+    train_fn = functools.partial(
+        gmmtd3.train,
+        **dict(gmmtd3_training_params),
+        network_factory=network_factory,
+        progress_fn=functools.partial(progress_fn, use_wandb=cfg.use_wandb),
+        eval_randomization_fn=randomization_fn,
+        randomization_fn=registry.get_domain_randomizer_eval(cfg.task),
+        use_wandb=cfg.use_wandb,
+        dr_train_ratio=cfg.dr_train_ratio,
+        seed=cfg.seed,
+        eval_with_training_env=cfg.eval_with_training_env,
+        value_obs_key=gmmtd3_params.network_factory.value_obs_key,
+        dr_augmented_critic=_cfg_flag(cfg, "dr_augmented_critic"),
+        beta=cfg.beta,
+    )
+    return train_fn(environment=env)
 
 
 def train_sac(cfg, randomization_fn, env, eval_env=None):
@@ -428,41 +569,6 @@ def train_td3(cfg, randomization_fn, env, eval_env=None):
     return train_fn(environment=env)
 
 
-def train_gmmtd3(cfg, randomization_fn, env, eval_env=None):
-    gmmtd3_params = _td3_config(cfg.task)
-    gmmtd3_params.dr_augmented_critic = _cfg_flag(cfg, "dr_augmented_critic")
-    _maybe_override_config(gmmtd3_params, cfg)
-    gmmtd3_training_params = dict(gmmtd3_params)
-    wandb_name = (
-        f"{cfg.task}.{cfg.policy}.{cfg.seed}.{cfg.beta}"
-    )
-    _init_wandb(cfg, wandb_name)
-
-    network_factory = gmmtd3_networks.make_gmmtd3_networks
-    if "network_factory" in gmmtd3_params:
-        del gmmtd3_training_params["network_factory"]
-        if not cfg.asymmetric_critic:
-            gmmtd3_params.network_factory.value_obs_key = "state"
-        network_factory = functools.partial(
-            gmmtd3_networks.make_gmmtd3_networks,
-            **gmmtd3_params.network_factory,
-        )
-
-    train_fn = functools.partial(
-        gmmtd3.train,
-        **dict(gmmtd3_training_params),
-        network_factory=network_factory,
-        progress_fn=functools.partial(progress_fn, use_wandb=cfg.use_wandb),
-        randomization_fn=_adv_randomizer(cfg.task, randomization_fn),
-        eval_randomization_fn=randomization_fn,
-        dr_train_ratio=cfg.dr_train_ratio,
-        seed=cfg.seed,
-        use_wandb=cfg.use_wandb,
-        beta=cfg.beta,
-    )
-    return train_fn(environment=env)
-
-
 def train_m2td3(cfg, randomization_fn, env, eval_env=None):
     m2td3_params = _td3_config(cfg.task)
     m2td3_params.omega_distance_threshold = 0.1
@@ -512,47 +618,44 @@ def train_m2td3(cfg, randomization_fn, env, eval_env=None):
     return train_fn(environment=env)
 
 
+def train_bridgetd3(cfg, randomization_fn, env, eval_env=None):
+    return _train_bridgetd3_variant(
+        cfg,
+        randomization_fn,
+        env,
+        eval_env=eval_env,
+        use_tc=False,
+    )
+
+
+def train_tc_bridgetd3(cfg, randomization_fn, env, eval_env=None):
+    return _train_bridgetd3_variant(
+        cfg,
+        randomization_fn,
+        env,
+        eval_env=eval_env,
+        use_tc=True,
+    )
+
+
 def train_gmmtd3(cfg, randomization_fn, env, eval_env=None):
-    if gmmtd3 is None or gmmtd3_networks is None:
-        raise ImportError(
-            "gmmtd3 dependencies are not available in this environment."
-        ) from _GMM_TD3_IMPORT_ERROR
-    gmmtd3_params = _td3_config(cfg.task)
-    _maybe_override_config(gmmtd3_params, cfg)
-
-    wandb_name = (
-        f"{cfg.task}.{cfg.policy}.seed={cfg.seed}"
+    return _train_gmmtd3_variant(
+        cfg,
+        randomization_fn,
+        env,
+        eval_env=eval_env,
+        use_tc=False,
     )
-    _init_wandb(cfg, wandb_name)
 
-    gmmtd3_training_params = dict(gmmtd3_params)
-    if "network_factory" in gmmtd3_params:
-        if not cfg.asymmetric_critic:
-            gmmtd3_params.network_factory.value_obs_key = "state"
-        del gmmtd3_training_params["network_factory"]
-        network_factory = functools.partial(
-            gmmtd3_networks.make_gmmtd3_networks,
-            **gmmtd3_params.network_factory,
-        )
-    else:
-        network_factory = gmmtd3_networks.make_gmmtd3_networks
 
-    train_fn = functools.partial(
-        gmmtd3.train,
-        **dict(gmmtd3_training_params),
-        network_factory=network_factory,
-        progress_fn=functools.partial(progress_fn, use_wandb=cfg.use_wandb),
-        eval_randomization_fn=randomization_fn,
-        randomization_fn=registry.get_domain_randomizer_eval(cfg.task),
-        use_wandb=cfg.use_wandb,
-        dr_train_ratio=cfg.dr_train_ratio,
-        seed=cfg.seed,
-        eval_with_training_env=cfg.eval_with_training_env,
-        value_obs_key=gmmtd3_params.network_factory.value_obs_key,
-        dr_augmented_critic=_cfg_flag(cfg, "dr_augmented_critic"),
-        beta=cfg.beta,
+def train_tc_gmmtd3(cfg, randomization_fn, env, eval_env=None):
+    return _train_gmmtd3_variant(
+        cfg,
+        randomization_fn,
+        env,
+        eval_env=eval_env,
+        use_tc=True,
     )
-    return train_fn(environment=env)
 
 
 def train_tcrmdp_algorithm(cfg, randomization_fn, env, algorithm: str, eval_env=None):
@@ -682,7 +785,10 @@ TRAINERS = {
     "wdsac": train_wdsac,
     "td3": train_td3,
     "m2td3": train_m2td3,
+    "bridgetd3": train_bridgetd3,
+    "tc_bridgetd3": train_tc_bridgetd3,
     "gmmtd3": train_gmmtd3,
+    "tc_gmmtd3": train_tc_gmmtd3,
     "rarl": train_rarl,
     "vanilla_tc_m2td3": train_vanilla_tc_m2td3,
     "tc_rarl": train_tc_rarl,

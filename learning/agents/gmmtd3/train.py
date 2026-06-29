@@ -42,6 +42,7 @@ from brax.training.acme import specs
 from agents.gmmtd3 import checkpoint
 from agents.gmmtd3 import losses as gmmtd3_losses
 from agents.gmmtd3 import networks as gmmtd3_networks
+from agents.tcrmdp import common as tc_common
 from brax.training.types import Params
 from brax.training.types import PRNGKey
 from brax.envs.base import Wrapper
@@ -227,6 +228,8 @@ def train(
     distributional_q=False,
     dr_augmented_critic: bool = False,
     beta: float = 1.0,
+    use_tc: bool = False,
+    radius: float = 0.001,
 ):
   """gmmtd3 training."""
   process_id = jax.process_index()
@@ -459,6 +462,16 @@ def train(
     )
     return (new_training_state, key), metrics
 
+  def current_env_params(env_state: envs.State, key: PRNGKey) -> jax.Array:
+    reset_params = jax.random.uniform(
+        key,
+        shape=env_state.info["dr_params"].shape,
+        minval=dr_range_low,
+        maxval=dr_range_high,
+    )
+    done = env_state.done[..., None]
+    return env_state.info["dr_params"] * (1 - done) + reset_params * done
+
   def adv_step(
     env: Env,
     env_state: State,
@@ -471,14 +484,24 @@ def train(
     key: PRNGKey,
     extra_fields: Sequence[str] = (),
   ):
-    actions, policy_extras = policy(env_state.obs, noise_scales, key)
+    action_key, tc_key = jax.random.split(key)
+    actions, policy_extras = policy(env_state.obs, noise_scales, action_key)
+    effective_dynamics_params = dynamics_params
+    if use_tc:
+      effective_dynamics_params = tc_common.clip_params_to_radius(
+          current_env_params(env_state, tc_key),
+          dynamics_params,
+          dr_range_low,
+          dr_range_high,
+          radius,
+      )
 
-    nstate = env.step(env_state, actions, dynamics_params)
+    nstate = env.step(env_state, actions, effective_dynamics_params)
     state_extras = {x: nstate.info[x] for x in extra_fields} 
 
     if dr_augmented_critic:
       q_values = gmmtd3_network.q_network.apply(
-          normalizer_params, q_params, env_state.obs, actions, dynamics_params
+          normalizer_params, q_params, env_state.obs, actions, effective_dynamics_params
       ).mean(-1)
     else:
       q_values = gmmtd3_network.q_network.apply(
@@ -491,7 +514,7 @@ def train(
         reward=nstate.reward,
         discount=1 - nstate.done,
         next_observation= nstate.obs,
-        dynamics_params=dynamics_params,
+        dynamics_params=effective_dynamics_params,
         q_values = q_values,
         target_lnpdf= target_lnpdf,
         target_lnpdf_grad= jnp.zeros_like(dynamics_params),
@@ -576,7 +599,7 @@ def train(
       Metrics,
   ]:
     experience_key, training_key, param_key, key_gmm = jax.random.split(key, 4)
-    dynamics_params, mapping = gmmtd3_network.gmm_network.sample_selector.select_samples(
+    sampled_dynamics_params, mapping = gmmtd3_network.gmm_network.sample_selector.select_samples(
         training_state.gmm_training_state.model_state,
         param_key,
     )
@@ -585,14 +608,14 @@ def train(
         training_state.policy_params,
         training_state.q_params,
         training_state.target_q_params,
-        dynamics_params,
+        sampled_dynamics_params,
         training_state.noise_scales,
         env_state,
         buffer_state,
         experience_key,
     )
     new_sample_db_state = gmmtd3_network.gmm_network.sample_selector.save_samples(training_state.gmm_training_state.model_state, \
-                      training_state.gmm_training_state.sample_db_state, dynamics_params, simul_transitions.target_lnpdf, \
+                      training_state.gmm_training_state.sample_db_state, simul_transitions.dynamics_params, simul_transitions.target_lnpdf, \
                         simul_transitions.target_lnpdf_grad, mapping)
     new_gmm_training_state = training_state.gmm_training_state._replace(sample_db_state=new_sample_db_state)
     training_state = training_state.replace(
@@ -624,7 +647,7 @@ def train(
     metrics.update(gmm_metrics)
     metrics['buffer_current_size'] = replay_buffer.size(buffer_state)
     metrics.update(simul_info)
-    return training_state, env_state, buffer_state, metrics, dynamics_params, target_lnpdf
+    return training_state, env_state, buffer_state, metrics, simul_transitions.dynamics_params, target_lnpdf
 
   def prefill_replay_buffer(
       training_state: TrainingState,
@@ -637,7 +660,7 @@ def train(
       del unused
       training_state, env_state, buffer_state, key = carry
       key, new_key, step_key = jax.random.split(key, 3)
-      dynamics_params, mapping = gmmtd3_network.gmm_network.sample_selector.select_samples(
+      sampled_dynamics_params, mapping = gmmtd3_network.gmm_network.sample_selector.select_samples(
           training_state.gmm_training_state.model_state,
           step_key,
       )
@@ -646,14 +669,14 @@ def train(
           training_state.policy_params,
           training_state.q_params,
           training_state.target_q_params,
-          dynamics_params,
+          sampled_dynamics_params,
           training_state.noise_scales,
           env_state,
           buffer_state,
           key,
       )
       new_sample_db_state = gmmtd3_network.gmm_network.sample_selector.save_samples(training_state.gmm_training_state.model_state, \
-                      training_state.gmm_training_state.sample_db_state, dynamics_params, simul_transitions.target_lnpdf, \
+                      training_state.gmm_training_state.sample_db_state, simul_transitions.dynamics_params, simul_transitions.target_lnpdf, \
                         simul_transitions.target_lnpdf_grad, mapping)
       new_gmm_training_state = training_state.gmm_training_state._replace(sample_db_state=new_sample_db_state)
       new_training_state = training_state.replace(

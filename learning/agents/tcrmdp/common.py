@@ -34,6 +34,18 @@ def update_params(
   return jnp.clip(params + radius * adv_action, dr_low, dr_high)
 
 
+def clip_params_to_radius(
+    params: jax.Array,
+    candidate_params: jax.Array,
+    dr_low: jax.Array,
+    dr_high: jax.Array,
+    radius: float,
+) -> jax.Array:
+  local_low = jnp.maximum(dr_low, params - radius)
+  local_high = jnp.minimum(dr_high, params + radius)
+  return jnp.clip(candidate_params, local_low, local_high)
+
+
 def action_to_params(
     adv_action: jax.Array,
     dr_low: jax.Array,
@@ -56,8 +68,9 @@ def build_observations(
     asymmetric_critic: bool = True,
     dr_augmented_critic: bool = False,
 ) -> Tuple[jax.Array, jax.Array, jax.Array]:
+  del dr_low, dr_high
   state = raw_state(obs)
-  psi = normalize_params(params, dr_low, dr_high)
+  psi = params
   state_and_psi = jnp.concatenate([state, psi], axis=-1)
   if algorithm == tcrmdp_networks.RARL:
     actor_obs = state
@@ -66,10 +79,7 @@ def build_observations(
     if omniscient_adversary:
       adv_obs = jnp.concatenate([adv_obs, agent_action], axis=-1)
     return actor_obs, critic_obs, adv_obs
-  if algorithm == tcrmdp_networks.VANILLA_TC_M2TD3:
-    actor_obs = state
-  else:
-    actor_obs = state_and_psi
+  actor_obs = state
   if dr_augmented_critic:
     critic_obs = state
   else:

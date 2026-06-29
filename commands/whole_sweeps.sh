@@ -9,8 +9,8 @@ set -euo pipefail
 #   bash commands/whole_sweeps.sh 0
 #   DRY_RUN=true bash commands/whole_sweeps.sh 0
 #   SMOKE=true USE_WANDB=false SEEDS="1" bash commands/whole_sweeps.sh 0
-#   POLICIES="td3 gmmtd3 m2td3" bash commands/whole_sweeps.sh 0
-#   POLICIES="rarl vanilla_tc_m2td3 tc_rarl tc_m2td3" bash commands/whole_sweeps.sh 0
+#   POLICIES="td3 gmmtd3 tc_gmmtd3 m2td3" bash commands/whole_sweeps.sh 0
+#   POLICIES="bridgetd3 tc_bridgetd3 rarl vanilla_tc_m2td3 tc_rarl tc_m2td3" bash commands/whole_sweeps.sh 0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -25,6 +25,7 @@ WANDB_GROUP_PREFIX="${WANDB_GROUP_PREFIX:-}"
 USE_WANDB="${USE_WANDB:-true}"
 SAVE_VIDEO="${SAVE_VIDEO:-false}"
 SAVE_AGENT="${SAVE_AGENT:-true}"
+IMPL="${IMPL:-}"
 CONDA_ENV="${CONDA_ENV:-rob-q}"
 USE_CONDA_RUN="${USE_CONDA_RUN:-true}"
 CONDA_NO_CAPTURE_OUTPUT="${CONDA_NO_CAPTURE_OUTPUT:-true}"
@@ -37,8 +38,11 @@ EXTRA_OVERRIDES="${EXTRA_OVERRIDES:-}"
 
 DEFAULT_POLICIES=(
   # td3
+  bridgetd3
+  tc_bridgetd3
   gmmtd3
-  # m2td3
+  tc_gmmtd3
+  m2td3
   rarl
   vanilla_tc_m2td3
   tc_rarl
@@ -68,12 +72,32 @@ GMMTD3_SWEEPS=(
 M2TD3_SWEEPS=(
   # Keep this first: before tuning M2TD3, compare this zeroed M2-specific
   # baseline against td3/default to check whether M2TD3 reaches TD3 performance.
-  # "zero_td3_check|td3_check_num_omegas-1_omega_distance_threshold-0_0_omega_noise_rate-0_0_omega_clip-0_0_omega_std-0_0_omega_lr-0_0_policy_frequency-2|++num_omegas=1 ++omega_distance_threshold=0.0 ++omega_noise_rate=0.0 ++omega_clip=0.0 ++omega_std=0.0 ++omega_lr=0.0 ++policy_frequency=2"
+  "zero_td3_check|td3_check_num_omegas-1_omega_distance_threshold-0_0_omega_noise_rate-0_0_omega_clip-0_0_omega_std-0_0_omega_lr-0_0_policy_frequency-2|++num_omegas=1 ++omega_distance_threshold=0.0 ++omega_noise_rate=0.0 ++omega_clip=0.0 ++omega_std=0.0 ++omega_lr=0.0 ++policy_frequency=2"
+  "omega010_k5|omega_distance_threshold-0_1_num_omegas-5|++omega_distance_threshold=0.1 ++num_omegas=5"
   "omega010_k5|omega_distance_threshold-0_1_num_omegas-5|++omega_distance_threshold=0.1 ++num_omegas=5"
   "omega005_k5|omega_distance_threshold-0_05_num_omegas-5|++omega_distance_threshold=0.05 ++num_omegas=5"
   "omega015_k5|omega_distance_threshold-0_15_num_omegas-5|++omega_distance_threshold=0.15 ++num_omegas=5"
   "omega010_k3|omega_distance_threshold-0_1_num_omegas-3|++omega_distance_threshold=0.1 ++num_omegas=3"
   "omega010_k10|omega_distance_threshold-0_1_num_omegas-10|++omega_distance_threshold=0.1 ++num_omegas=10"
+)
+
+BRIDGETD3_SWEEPS=(
+  # Fixed-alpha baselines.
+  "fixed_alpha050|auto-false_bridge_alpha-0_5_nfe-8|bridge_auto_alpha=false bridge_alpha=0.5 ++network_factory.adversary_num_flow_steps=4"
+  "fixed_alpha100|auto-false_bridge_alpha-1_0_nfe-8|bridge_auto_alpha=false bridge_alpha=1.0 ++network_factory.adversary_num_flow_steps=4"
+
+  # FLAC-style automatic energy tuning.
+  "auto_kcoef100|auto-true_target_kinetic_coef-1_0_nfe-8|bridge_auto_alpha=true bridge_target_kinetic_coef=1.0 ++network_factory.adversary_num_flow_steps=4"
+  "auto_kcoef250|auto-true_target_kinetic_coef-2_5_nfe-8|bridge_auto_alpha=true bridge_target_kinetic_coef=2.5 ++network_factory.adversary_num_flow_steps=4"
+  "auto_kcoef400|auto-true_target_kinetic_coef-4_0_nfe-8|bridge_auto_alpha=true bridge_target_kinetic_coef=4.0 ++network_factory.adversary_num_flow_steps=4"
+
+  # A small NFE sweep while keeping auto tuning on.
+  "auto_kcoef250_nfe4|auto-true_target_kinetic_coef-2_5_nfe-4|bridge_auto_alpha=true bridge_target_kinetic_coef=2.5 ++network_factory.adversary_num_flow_steps=2"
+  "auto_kcoef250_nfe12|auto-true_target_kinetic_coef-2_5_nfe-12|bridge_auto_alpha=true bridge_target_kinetic_coef=2.5 ++network_factory.adversary_num_flow_steps=6"
+
+  # Adversary learning-rate sensitivity.
+  "auto_kcoef250_advlr1e4|auto-true_target_kinetic_coef-2_5_adversary_lr-1e-4_nfe-8|bridge_auto_alpha=true bridge_target_kinetic_coef=2.5 adversary_learning_rate=1e-4 ++network_factory.adversary_num_flow_steps=4"
+  "auto_kcoef250_advlr3e4|auto-true_target_kinetic_coef-2_5_adversary_lr-3e-4_nfe-8|bridge_auto_alpha=true bridge_target_kinetic_coef=2.5 adversary_learning_rate=3e-4 ++network_factory.adversary_num_flow_steps=4"
 )
 
 RARL_SWEEPS=(
@@ -102,11 +126,13 @@ VANILLA_TC_M2TD3_SWEEPS=(
 )
 
 TC_M2TD3_SWEEPS=(
-  "radius00025|radius-0_00025|radius=0.00025"
-  "radius0005|radius-0_0005|radius=0.0005"
-  "radius0010|radius-0_001|radius=0.001"
-  "radius0020|radius-0_002|radius=0.002"
-  "radius0040|radius-0_004|radius=0.004"
+  "radius0000|radius-0_0000|radius=0.0000"
+
+  # "radius00025|radius-0_00025|radius=0.00025"
+  # "radius0005|radius-0_0005|radius=0.0005"
+  # "radius0010|radius-0_001|radius=0.001"
+  # "radius0020|radius-0_002|radius=0.002"
+  # "radius0040|radius-0_004|radius=0.004"
 )
 
 SMOKE_OVERRIDES=()
@@ -138,6 +164,10 @@ COMMON_OVERRIDES=(
   "dr_augmented_critic=${DR_AUGMENTED_CRITIC}"
 )
 
+if [[ -n "${IMPL}" ]]; then
+  COMMON_OVERRIDES+=("impl=${IMPL}")
+fi
+
 _python_cmd() {
   if [[ "${USE_CONDA_RUN}" == "true" ]]; then
     local cmd=(conda run -n "${CONDA_ENV}")
@@ -160,11 +190,16 @@ _print_cmd() {
 _wandb_group() {
   local policy="$1"
   local hp_choice="$2"
+  local group
   if [[ -n "${WANDB_GROUP_PREFIX}" ]]; then
-    printf '%s.%s.%s.%s\n' "${WANDB_GROUP_PREFIX}" "${TASK}" "${policy}" "${hp_choice}"
+    group="$(printf '%s.%s.%s.%s' "${WANDB_GROUP_PREFIX}" "${TASK}" "${policy}" "${hp_choice}")"
   else
-    printf '%s.%s.%s\n' "${TASK}" "${policy}" "${hp_choice}"
+    group="$(printf '%s.%s.%s' "${TASK}" "${policy}" "${hp_choice}")"
   fi
+  if [[ "${policy}" == "tc_gmmtd3" || "${policy}" == "tc_bridgetd3" ]]; then
+    group="tc_${group}"
+  fi
+  printf '%s\n' "${group}"
 }
 
 run_case() {
@@ -239,12 +274,21 @@ run_policy_sweep() {
     td3)
       run_sweep_entries td3 "${TD3_SWEEPS[@]}"
       ;;
+    bridgetd3)
+      run_sweep_entries bridgetd3 "${BRIDGETD3_SWEEPS[@]}"
+      ;;
+    tc_bridgetd3)
+      run_sweep_entries tc_bridgetd3 "${BRIDGETD3_SWEEPS[@]}"
+      ;;
     gmmtd3)
       run_sweep_entries gmmtd3 "${GMMTD3_SWEEPS[@]}"
       ;;
-    # m2td3)
-    #   run_sweep_entries m2td3 "${M2TD3_SWEEPS[@]}"
-    #   ;;
+    tc_gmmtd3)
+      run_sweep_entries tc_gmmtd3 "${GMMTD3_SWEEPS[@]}"
+      ;;
+    m2td3)
+      run_sweep_entries m2td3 "${M2TD3_SWEEPS[@]}"
+      ;;
     rarl)
       run_sweep_entries rarl "${RARL_SWEEPS[@]}"
       ;;

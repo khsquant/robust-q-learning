@@ -18,7 +18,7 @@ eval_with_training_env : false #used by gmmtd3
 policy : td3
 asymmetric_critic: true
 dr_augmented_critic: true
-distributional_q : true
+distributional_q : false
 use_tuned_reward: false
 
 #dynamics shift
@@ -77,6 +77,14 @@ simba : false
 
 #m2td3
 omega_distance_threshold: 0.1
+
+#bridgetd3
+bridge_alpha: 1.0
+bridge_auto_alpha: false
+bridge_target_kinetic_coef: 2.5
+bridge_init_log_alpha: null
+bridge_alpha_lr: null
+adversary_learning_rate: null
 
 #gmmtd3
 beta: 1.0

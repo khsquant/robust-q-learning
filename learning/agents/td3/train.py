@@ -69,7 +69,7 @@ class TransitionwithCritic(NamedTuple):
   next_observation: jax.Array
   dynamics_params: jax.Array
   q_values : jax.Array
-  target_lnpdf: jax.Array
+  # target_lnpdf: jax.Array
   extras: FrozenDict[str, Any]  # recommended
 
 @flax.struct.dataclass
@@ -313,7 +313,7 @@ def train(
       next_observation=dummy_obs,
       dynamics_params=jnp.zeros((param_size,), dtype=jnp.float32),
       q_values=dummy_q_values,
-      target_lnpdf=dummy_q_values,
+      # target_lnpdf=dummy_q_values,
       extras={'state_extras': {'truncation': 0.0}, 'policy_extras': {}},
   )
   replay_buffer = replay_buffers.UniformSamplingQueue(
@@ -435,6 +435,11 @@ def train(
         noise_scales=training_state.noise_scales,
     )
     return (new_training_state, key), metrics
+  def current_env_params(env_state: envs.State, reset_params) -> jax.Array:
+    done = env_state.done[..., None]
+    return reset_params
+    return env_state.info["dr_params"] * (1 - done) + reset_params * done
+
   def adv_step(
     env: Env,
     env_state: State,
@@ -449,7 +454,7 @@ def train(
   ):
     step_key, key = jax.random.split(key)
     actions, policy_extras = policy(env_state.obs, noise_scales, key)
-    nstate = env.step(env_state, actions, dynamics_params)
+    nstate = env.step(env_state, actions, current_env_params(env_state, dynamics_params))
     if dr_augmented_critic:
       q_values = td3_network.q_network.apply(
           normalizer_params, q_params, env_state.obs, actions, dynamics_params
@@ -458,7 +463,7 @@ def train(
       q_values = td3_network.q_network.apply(
           normalizer_params, q_params, env_state.obs, actions
       ).mean(-1)
-    target_lnpdfs = jax.nn.log_softmax(-q_values, -1)
+    # target_lnpdfs = jax.nn.log_softmax(-q_values, -1)
     state_extras = {x: nstate.info[x] for x in extra_fields}
     return nstate, TransitionwithCritic(  # pytype: disable=wrong-arg-types  # jax-ndarray
         observation=env_state.obs,
@@ -468,7 +473,6 @@ def train(
         next_observation= nstate.obs,
         dynamics_params=dynamics_params,
         q_values = q_values,
-        target_lnpdf= target_lnpdfs,
         extras={'policy_extras': policy_extras, 'state_extras': state_extras},
     )
   def get_experience(
@@ -639,7 +643,6 @@ def train(
     def f(carry, dynamics_param):
       training_state, env_state, buffer_state, key = carry
       key, new_key = jax.random.split(key)
-      print("dynamics_param", dynamics_param)
 
       new_normalizer_params, new_noise_scales, env_state, buffer_state, simul_info, simul_transitions = get_experience(
           training_state.normalizer_params,

@@ -60,9 +60,6 @@ def make_inference_fn(tcrmdp_networks: TCRMDPNetworks):
       if isinstance(observations, Mapping) and "actor_state" in observations:
         return observations
       state = _raw_state(observations)
-      if tcrmdp_networks.algorithm in (TC_RARL, TC_M2TD3):
-        zeros = jnp.zeros(state.shape[:-1] + (tcrmdp_networks.dynamics_param_size,))
-        state = jnp.concatenate([state, zeros], axis=-1)
       return {"actor_state": state}
 
     def deterministic_policy(
