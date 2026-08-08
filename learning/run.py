@@ -46,6 +46,10 @@ from agents.m2td3 import networks as m2td3_networks
 from agents.m2td3 import train as m2td3
 from agents.sac import networks as sac_networks
 from agents.sac import train as sac
+
+from agents.gmmsac import networks as gmmsac_networks # 수정됨
+from agents.gmmsac import train as gmmsac
+
 from agents.tcrmdp import networks as tcrmdp_networks
 from agents.tcrmdp import train as tcrmdp
 from agents.td3 import networks as td3_networks
