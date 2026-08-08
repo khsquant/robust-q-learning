@@ -108,12 +108,14 @@ _randomizer = {
   "CartpoleSwingup": cartpole.domain_randomize,
   "HopperHop" : hopper.domain_randomize,
   "CheetahRun" : cheetah.domain_randomize,
+  "WalkerWalk": walker.domain_randomize,
 }
 _randomizer_eval = {
 
   "CartpoleSwingup": cartpole.domain_randomize_eval,
   "HopperHop" : hopper.domain_randomize_eval,
   "CheetahRun" : cheetah.domain_randomize_eval,
+  "WalkerWalk": walker.domain_randomize_eval,
 }
 
 def __getattr__(name):
