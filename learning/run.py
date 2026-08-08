@@ -823,6 +823,7 @@ TRAINERS = {
     "bridgetd3": train_bridgetd3,
     "tc_bridgetd3": train_tc_bridgetd3,
     "gmmtd3": train_gmmtd3,
+    "gmmsac": train_gmmsac, # 수정됨
     "tc_gmmtd3": train_tc_gmmtd3,
     "rarl": train_rarl,
     "vanilla_tc_m2td3": train_vanilla_tc_m2td3,
