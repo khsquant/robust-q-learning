@@ -538,6 +538,37 @@ def train_wdsac(cfg, randomization_fn, env, eval_env=None):
         eval_env=eval_env,
     )
 
+def train_gmmsac(cfg, randomization_fn, env, eval_env=None): # 수정됨
+    gmmsac_params = _sac_config(cfg.task)
+    gmmsac_params.dr_augmented_critic = _cfg_flag(cfg, "dr_augmented_critic")
+    _maybe_override_config(gmmsac_params, cfg)
+    gmmsac_training_params = dict(gmmsac_params)
+    wandb_name = f"{cfg.task}.{cfg.policy}.seed={cfg.seed}.beta={cfg.beta}"
+    _init_wandb(cfg, wandb_name)
+
+    if "network_factory" in gmmsac_params:
+        del gmmsac_training_params["network_factory"]
+        if not cfg.asymmetric_critic:
+            gmmsac_params.network_factory.value_obs_key = "state"
+        network_factory = functools.partial(
+            gmmsac_networks.make_gmmsac_networks,
+            **gmmsac_params.network_factory,
+        )
+    else:
+        network_factory = gmmsac_networks.make_gmmsac_networks
+
+    train_fn = functools.partial(
+        gmmsac.train,
+        **dict(gmmsac_training_params),
+        network_factory=network_factory,
+        progress_fn=functools.partial(progress_fn, use_wandb=cfg.use_wandb),
+        randomization_fn=_adv_randomizer(cfg.task, randomization_fn),
+        eval_randomization_fn=randomization_fn,
+        dr_train_ratio=cfg.dr_train_ratio,
+        seed=cfg.seed,
+        beta=cfg.beta,
+    )
+    return train_fn(environment=env)
 
 def train_td3(cfg, randomization_fn, env, eval_env=None):
     td3_params = _td3_config(cfg.task)
