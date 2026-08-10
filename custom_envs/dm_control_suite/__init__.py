@@ -23,7 +23,7 @@ from custom_envs import mjx_env
 from ml_collections import config_dict
 
 from custom_envs import mjx_env
-# from mujoco_playground._src.dm_control_suite import acrobot
+from mujoco_playground._src.dm_control_suite import acrobot
 # from mujoco_playground._src.dm_control_suite import ball_in_cup
 from custom_envs.dm_control_suite import cartpole
 from custom_envs.dm_control_suite import cheetah
@@ -38,7 +38,7 @@ from custom_envs.dm_control_suite import pendulum
 from custom_envs.dm_control_suite import walker
 
 _envs = {
-    # "AcrobotSwingup": partial(acrobot.Balance, sparse=False),
+    "AcrobotSwingup": partial(acrobot.Balance, sparse=False),
     # "AcrobotSwingupSparse": partial(acrobot.Balance, sparse=True),
     # "BallInCup": ball_in_cup.BallInCup,
     "CartpoleBalance": partial(cartpole.Balance, swing_up=False, sparse=False),
@@ -75,7 +75,7 @@ _envs = {
 
 _cfgs = {
     # go/keep-sorted start
-    # "AcrobotSwingup": acrobot.default_config,
+    "AcrobotSwingup": acrobot.default_config,
     # "AcrobotSwingupSparse": acrobot.default_config,
     # "BallInCup": ball_in_cup.default_config,
     "CartpoleBalance": cartpole.default_config,
@@ -109,6 +109,7 @@ _randomizer = {
   "HopperHop" : hopper.domain_randomize,
   "CheetahRun" : cheetah.domain_randomize,
   "WalkerWalk": walker.domain_randomize,
+  "AcrobotSwingup" : acrobot.domain_randomize,
 }
 _randomizer_eval = {
 
@@ -116,6 +117,7 @@ _randomizer_eval = {
   "HopperHop" : hopper.domain_randomize_eval,
   "CheetahRun" : cheetah.domain_randomize_eval,
   "WalkerWalk": walker.domain_randomize_eval,
+  "AcrobotSwingup" : acrobot.domain_randomize_eval,
 }
 
 def __getattr__(name):
