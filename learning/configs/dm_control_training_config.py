@@ -56,7 +56,7 @@ def brax_sac_config(env_name: str) -> config_dict.ConfigDict:
       in ("CheetahRun", "HumanoidWalk", "PendulumSwingUp", "WalkerRun")
   ):
     rl_config.num_timesteps = 30_000_000
-  if env_name in ("CheetahRun","WalkerRun", "PendulumSwingUp", "HumanoidWalk", "CartpoleSwingup", "AcrobotSwingup", "WalkerWalk"):
+  if env_name in ("CheetahRun","WalkerRun", "PendulumSwingUp", "HumanoidWalk", "CartpoleSwingup", "AcrobotSwingup", "WalkerWalk"): # 수정됨
     rl_config.network_factory = config_dict.create(
       q_network_layer_norm=True,
       policy_obs_key="state",
@@ -106,7 +106,7 @@ def brax_td3_config(env_name: str) -> config_dict.ConfigDict:
   ):
     std_min=0.1
     rl_config.num_timesteps = 30_000_000
-  if env_name in ("CheetahRun","WalkerRun", "PendulumSwingUp", "HumanoidWalk", "CartpoleSwingup","HopperHop"):
+  if env_name in ("CheetahRun","WalkerRun", "PendulumSwingUp", "HumanoidWalk", "CartpoleSwingup","HopperHop", "AcrobotSwingup", "WalkerWalk"):
     rl_config.network_factory = config_dict.create(
       q_network_layer_norm=True,
       distributional_q = False,
