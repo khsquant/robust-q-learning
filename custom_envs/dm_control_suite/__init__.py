@@ -23,7 +23,8 @@ from custom_envs import mjx_env
 from ml_collections import config_dict
 
 from custom_envs import mjx_env
-from mujoco_playground._src.dm_control_suite import acrobot
+#from mujoco_playground._src.dm_control_suite import acrobot
+from custom_envs.dm_control_suite import acrobot
 # from mujoco_playground._src.dm_control_suite import ball_in_cup
 from custom_envs.dm_control_suite import cartpole
 from custom_envs.dm_control_suite import cheetah
