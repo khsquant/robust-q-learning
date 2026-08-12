@@ -159,7 +159,8 @@ def _init_training_state(
 
   normalizer_params = running_statistics.init_state(
     #   specs.Array((obs_size,), jnp.dtype('float32'))
-    obs_size if isinstance(obs_size, dict) else specs.Array((obs_size,), jnp.dtype('float32'))
+    #obs_size if isinstance(obs_size, dict) else specs.Array((obs_size,), jnp.dtype('float32'))
+    obs_size # 수정됨
   )
   training_state = TrainingState(
       policy_optimizer_state=policy_optimizer_state,
