@@ -27,7 +27,7 @@ randomization: true
 eval_randomization: true
 # logging
 wandb_project: test-algorithms
-wandb_entity: tjrcjf410-seoul-national-university
+wandb_entity: rlagustn31-seoul-national-university
 wandb_group_prefix: ''
 wandb_group: ''
 wandb_silent: false
