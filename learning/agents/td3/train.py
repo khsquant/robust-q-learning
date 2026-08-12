@@ -655,7 +655,8 @@ def train(
           buffer_state,
           key,
       )
-      pdf_values = simul_transitions.target_lnpdf
+      # pdf_values = simul_transitions.target_lnpdf
+      pdf_values = simul_transitions.q_values # 수정됨
       
       new_training_state = training_state.replace(
           normalizer_params=new_normalizer_params,
