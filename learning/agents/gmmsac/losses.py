@@ -39,7 +39,7 @@ def make_losses(
 ):
   """Creates the SAC losses."""
 
-  target_entropy = -0.5 * action_size
+  target_entropy = -1.0 * action_size
   policy_network = sac_network.policy_network
   gmm_network = sac_network.gmm_network
   q_network = sac_network.q_network
