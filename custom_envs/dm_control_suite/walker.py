@@ -232,8 +232,8 @@ LEFT_THIGH_ID, LEFT_LEG_ID, LEFT_FOOT_ID = 5, 6, 7
 def _walker_fields(model, p):
   """p로부터 랜덤화된 (마찰, 질량, ipos오프셋) 필드를 만든다.
   p[0]=마찰, p[1]=몸통, p[2:4]=허벅지(L,R), p[4:6]=종아리(L,R), p[6:8]=발(L,R),
-  p[8:15]=body 1~7의 ipos z축 오프셋(7D).
-  주의: 논문의 'Body offset 7D'가 어느 축인지 명시가 없어 z축(index 2)에 적용한다고 가정함.
+  p[8:15]=body 1~7의 ipos x축 오프셋(7D).
+  주의: 논문의 'Body offset 7D'가 어느 축인지 명시가 없어 x축(index 0)에 적용한다고 가정함.
         (논문 공개코드가 있으면 축을 맞춰 확인 필요)"""
   geom_friction = model.geom_friction.at[FLOOR_GEOM_ID, 0].set(p[0])
   body_mass = model.body_mass
@@ -244,8 +244,10 @@ def _walker_fields(model, p):
   body_mass = body_mass.at[RIGHT_LEG_ID].set(p[5])
   body_mass = body_mass.at[LEFT_FOOT_ID].set(p[6])
   body_mass = body_mass.at[RIGHT_FOOT_ID].set(p[7])
-  # body 1~7 의 ipos z성분에 per-body 오프셋을 더함 (7D)
-  body_ipos = model.body_ipos.at[1:8, 2].add(p[8:15])
+  # 변경 전: body 1~7의 ipos z성분(index 2)
+  #body_ipos = model.body_ipos.at[1:8, 2].add(p[8:15])
+  # 변경 후: x성분(index 0) — PPO의 privileged/eval과 축 일치
+  body_ipos = model.body_ipos.at[1:8, 0].add(p[8:15])
   return geom_friction, body_mass, body_ipos
 
 
