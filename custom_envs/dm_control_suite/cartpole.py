@@ -318,13 +318,19 @@ POLE_BODY_ID = 2
 
 POLE_BODY_ID = 2
 
-
+def _cartpole_fields(model, p):
+  """p[0]=pole 질량·관성 스케일(nominal 대비 배수), p[1]=중력(z)."""
+  body_mass = model.body_mass.at[POLE_BODY_ID].set(model.body_mass[POLE_BODY_ID] * p[0])
+  body_inertia = model.body_inertia.at[POLE_BODY_ID].set(model.body_inertia[POLE_BODY_ID] * p[0])
+  gravity = model.opt.gravity.at[2].set(p[1])
+  return body_mass, body_inertia, gravity
+'''
 def _cartpole_fields(model, p):
   """p[0]=막대(pole) 질량, p[1]=중력(z). 중력은 opt.gravity의 z성분만 바꾼다."""
   body_mass = model.body_mass.at[POLE_BODY_ID].set(p[0])
   gravity = model.opt.gravity.at[2].set(p[1])
   return body_mass, gravity
-
+'''
 
 def domain_randomize(model: mjx.Model, dr_range, params=None, rng: jax.Array = None):
   """학습용: rng면 균등분포 샘플, params면 그 값 사용. (내부 vmap)"""
@@ -341,15 +347,19 @@ def domain_randomize(model: mjx.Model, dr_range, params=None, rng: jax.Array = N
     return _cartpole_fields(model, dist(rng))
 
   if rng is None and params is not None:
-    body_mass, gravity = shift_dynamics(params)
+    #body_mass, gravity = shift_dynamics(params)
+    body_mass, body_inertia, gravity = shift_dynamics(params)
   elif rng is not None and params is None:
-    body_mass, gravity = rand_dynamics(rng)
+    #body_mass, gravity = rand_dynamics(rng)
+    body_mass, body_inertia, gravity = rand_dynamics(rng)
   else:
     raise ValueError("rng and params wrong!")
 
   in_axes = jax.tree_util.tree_map(lambda x: None, model)
-  in_axes = in_axes.tree_replace({"body_mass": 0, "opt.gravity": 0})
-  model = model.tree_replace({"body_mass": body_mass, "opt.gravity": gravity})
+  #in_axes = in_axes.tree_replace({"body_mass": 0, "opt.gravity": 0})
+  #model = model.tree_replace({"body_mass": body_mass, "opt.gravity": gravity})
+  in_axes = in_axes.tree_replace({"body_mass": 0, "body_inertia": 0, "opt.gravity": 0})
+  model = model.tree_replace({"body_mass": body_mass, "body_inertia": body_inertia, "opt.gravity": gravity})
   return model, in_axes
 
 
@@ -366,13 +376,17 @@ def domain_randomize_eval(model: mjx.Model, dr_range, params=None, rng: jax.Arra
     return _cartpole_fields(model, dist(rng))
 
   if rng is None and params is not None:
-    body_mass, gravity = shift_dynamics(params)
+    #body_mass, gravity = shift_dynamics(params)
+    body_mass, body_inertia, gravity = shift_dynamics(params)
   elif rng is not None and params is None:
-    body_mass, gravity = rand_dynamics(rng)
+    #body_mass, gravity = rand_dynamics(rng)
+    body_mass, body_inertia, gravity = rand_dynamics(rng)
   else:
     raise ValueError("rng and params wrong!")
 
   in_axes = jax.tree_util.tree_map(lambda x: None, model)
-  in_axes = in_axes.tree_replace({"body_mass": 0, "opt.gravity": 0})
-  model = model.tree_replace({"body_mass": body_mass, "opt.gravity": gravity})
+  #in_axes = in_axes.tree_replace({"body_mass": 0, "opt.gravity": 0})
+  #model = model.tree_replace({"body_mass": body_mass, "opt.gravity": gravity})
+  in_axes = in_axes.tree_replace({"body_mass": 0, "body_inertia": 0, "opt.gravity": 0})
+  model = model.tree_replace({"body_mass": body_mass, "body_inertia": body_inertia, "opt.gravity": gravity})
   return model, in_axes
