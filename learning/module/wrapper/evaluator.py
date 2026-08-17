@@ -478,6 +478,11 @@ class AdvEvaluator:
     metrics['eval/episode_reward_p75'] = np.percentile(eval_metrics.episode_metrics['reward'],75)
     metrics['eval/episode_reward_std'] = np.std(eval_metrics.episode_metrics['reward'])
     metrics['eval/episode_reward_min'] = np.min(eval_metrics.episode_metrics['reward'])
+
+    _r = np.sort(np.asarray(eval_metrics.episode_metrics['reward']).ravel())
+    metrics['eval/episode_reward_cvar10'] = _r[:max(1, int(_r.shape[0]*0.10))].mean()
+    metrics['eval/episode_reward_cvar20'] = _r[:max(1, int(_r.shape[0]*0.20))].mean()
+    
     metrics['eval/episode_reward_max'] = np.max(eval_metrics.episode_metrics['reward'])
     metrics['eval/episode_reward_iqm'] = scipy.stats.trim_mean(eval_metrics.episode_metrics['reward'], proportiontocut=0.25, axis=None)
     metrics['eval/avg_episode_length'] = np.mean(eval_metrics.episode_steps)
