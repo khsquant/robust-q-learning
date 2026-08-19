@@ -621,8 +621,8 @@ def train(
         experience_key,
     )
     new_sample_db_state = gmmtd3_network.gmm_network.sample_selector.save_samples(training_state.gmm_training_state.model_state, \
-                      training_state.gmm_training_state.sample_db_state, sampled_dynamics_params, simul_transitions.target_lnpdf, \ # simul_transitions.dynamics_params -> sampled_dynamics_params
-                        simul_transitions.target_lnpdf_grad, mapping)
+                      training_state.gmm_training_state.sample_db_state, sampled_dynamics_params, simul_transitions.target_lnpdf, \
+                        simul_transitions.target_lnpdf_grad, mapping) # simul_transitions.dynamics_params -> sampled_dynamics_params
     new_gmm_training_state = training_state.gmm_training_state._replace(sample_db_state=new_sample_db_state)
     training_state = training_state.replace(
         normalizer_params=normalizer_params,
