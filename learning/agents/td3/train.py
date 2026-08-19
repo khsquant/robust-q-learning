@@ -437,7 +437,7 @@ def train(
     return (new_training_state, key), metrics
   def current_env_params(env_state: envs.State, reset_params) -> jax.Array:
     done = env_state.done[..., None]
-    return reset_params
+    #return reset_params
     return env_state.info["dr_params"] * (1 - done) + reset_params * done
 
   def adv_step(
@@ -454,10 +454,17 @@ def train(
   ):
     step_key, key = jax.random.split(key)
     actions, policy_extras = policy(env_state.obs, noise_scales, key)
-    nstate = env.step(env_state, actions, current_env_params(env_state, dynamics_params))
+    
+    eff_params = current_env_params(env_state, dynamics_params)     # 에피소드 내 고정
+    nstate = env.step(env_state, actions, eff_params)
+    #nstate = env.step(env_state, actions, current_env_params(env_state, dynamics_params))
+    
     if dr_augmented_critic:
+      #q_values = td3_network.q_network.apply(
+      #    normalizer_params, q_params, env_state.obs, actions, dynamics_params
+      #).mean(-1)
       q_values = td3_network.q_network.apply(
-          normalizer_params, q_params, env_state.obs, actions, dynamics_params
+          normalizer_params, q_params, env_state.obs, actions, eff_params
       ).mean(-1)
     else:
       q_values = td3_network.q_network.apply(
@@ -471,7 +478,8 @@ def train(
         reward=nstate.reward,
         discount=1 - nstate.done,
         next_observation= nstate.obs,
-        dynamics_params=dynamics_params,
+        #dynamics_params=dynamics_params,
+        dynamics_params=eff_params,
         q_values = q_values,
         extras={'policy_extras': policy_extras, 'state_extras': state_extras},
     )
