@@ -404,7 +404,11 @@ def train(
     ):
       act_key, key = jax.random.split(key)
       actions, policy_extras = policy(env_state.obs, act_key)
-      nstate = env.step(env_state, actions, dynamics_params)
+
+      done = env_state.done[..., None]
+      xi_env = env_state.info["dr_params"] * (1 - done) + dynamics_params * done
+      nstate = env.step(env_state, actions, xi_env)
+      #nstate = env.step(env_state, actions, dynamics_params)
       state_extras = {x: nstate.info[x] for x in extra_fields}
       if dr_augmented_critic:
         q_values = sac_network.q_network.apply(
@@ -416,7 +420,8 @@ def train(
       return nstate, TransitionwithParams(
           observation=env_state.obs,
           action=actions,
-          dynamics_params=dynamics_params,
+          #dynamics_params=dynamics_params,
+          dynamics_params=xi_env, 
           reward=nstate.reward,
           discount=1 - nstate.done,
           next_observation=nstate.obs,
@@ -456,7 +461,7 @@ def train(
     new_sample_db_state = sac_network.gmm_network.sample_selector.save_samples(
         training_state.gmm_training_state.model_state,
         training_state.gmm_training_state.sample_db_state,
-        simul_transitions.dynamics_params, simul_transitions.target_lnpdf,
+        sampled_params, simul_transitions.target_lnpdf, # simul_transitions.dynamics_params -> sampled_params
         simul_transitions.target_lnpdf_grad, mapping)
     new_gmm_training_state = training_state.gmm_training_state._replace(sample_db_state=new_sample_db_state)
     training_state = training_state.replace(
@@ -490,7 +495,7 @@ def train(
       new_sample_db_state = sac_network.gmm_network.sample_selector.save_samples(
           training_state.gmm_training_state.model_state,
           training_state.gmm_training_state.sample_db_state,
-          simul_transitions.dynamics_params, simul_transitions.target_lnpdf,
+          sampled_params, simul_transitions.target_lnpdf, # simul_transitions.dynamics_params -> sampled_params
           simul_transitions.target_lnpdf_grad, mapping)
       new_gmm_training_state = training_state.gmm_training_state._replace(sample_db_state=new_sample_db_state)
       new_training_state = training_state.replace(
