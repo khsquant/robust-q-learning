@@ -496,13 +496,17 @@ def train(
           dr_range_high,
           radius,
       )
-
-    nstate = env.step(env_state, actions, effective_dynamics_params)
+    
+    done = env_state.done[..., None]
+    xi_env = env_state.info["dr_params"] * (1 - done) + dynamics_params * done  # 에피소드 내 고정
+    nstate = env.step(env_state, actions, xi_env)
+    
+    #nstate = env.step(env_state, actions, effective_dynamics_params)
     state_extras = {x: nstate.info[x] for x in extra_fields} 
 
     if dr_augmented_critic:
       q_values = gmmtd3_network.q_network.apply(
-          normalizer_params, q_params, env_state.obs, actions, effective_dynamics_params
+          normalizer_params, q_params, env_state.obs, actions, dynamics_params #effective_dynamics_params
       ).mean(-1)
     else:
       q_values = gmmtd3_network.q_network.apply(
@@ -515,7 +519,8 @@ def train(
         reward=nstate.reward,
         discount=1 - nstate.done,
         next_observation= nstate.obs,
-        dynamics_params=effective_dynamics_params,
+        #dynamics_params=effective_dynamics_params,
+        dynamics_params=xi_env,
         q_values = q_values,
         target_lnpdf= target_lnpdf,
         target_lnpdf_grad= jnp.zeros_like(dynamics_params),
@@ -616,7 +621,7 @@ def train(
         experience_key,
     )
     new_sample_db_state = gmmtd3_network.gmm_network.sample_selector.save_samples(training_state.gmm_training_state.model_state, \
-                      training_state.gmm_training_state.sample_db_state, simul_transitions.dynamics_params, simul_transitions.target_lnpdf, \
+                      training_state.gmm_training_state.sample_db_state, sampled_dynamics_params, simul_transitions.target_lnpdf, \ # simul_transitions.dynamics_params -> sampled_dynamics_params
                         simul_transitions.target_lnpdf_grad, mapping)
     new_gmm_training_state = training_state.gmm_training_state._replace(sample_db_state=new_sample_db_state)
     training_state = training_state.replace(
@@ -648,7 +653,7 @@ def train(
     metrics.update(gmm_metrics)
     metrics['buffer_current_size'] = replay_buffer.size(buffer_state)
     metrics.update(simul_info)
-    return training_state, env_state, buffer_state, metrics, simul_transitions.dynamics_params, target_lnpdf
+    return training_state, env_state, buffer_state, metrics, sampled_dynamics_params, target_lnpdf # simul_transitions.dynamics_params -> sampled_dynamics_params
 
   def prefill_replay_buffer(
       training_state: TrainingState,
@@ -677,7 +682,7 @@ def train(
           key,
       )
       new_sample_db_state = gmmtd3_network.gmm_network.sample_selector.save_samples(training_state.gmm_training_state.model_state, \
-                      training_state.gmm_training_state.sample_db_state, simul_transitions.dynamics_params, simul_transitions.target_lnpdf, \
+                      training_state.gmm_training_state.sample_db_state, sampled_dynamics_params, simul_transitions.target_lnpdf, \ # simul_transitions.dynamics_params -> sampled_dynamics_params
                         simul_transitions.target_lnpdf_grad, mapping)
       new_gmm_training_state = training_state.gmm_training_state._replace(sample_db_state=new_sample_db_state)
       new_training_state = training_state.replace(
