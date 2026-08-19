@@ -460,11 +460,8 @@ def train(
     #nstate = env.step(env_state, actions, current_env_params(env_state, dynamics_params))
     
     if dr_augmented_critic:
-      #q_values = td3_network.q_network.apply(
-      #    normalizer_params, q_params, env_state.obs, actions, dynamics_params
-      #).mean(-1)
       q_values = td3_network.q_network.apply(
-          normalizer_params, q_params, env_state.obs, actions, eff_params
+          normalizer_params, q_params, env_state.obs, actions, dynamics_params
       ).mean(-1)
     else:
       q_values = td3_network.q_network.apply(
