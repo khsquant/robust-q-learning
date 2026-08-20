@@ -212,7 +212,7 @@ def train(
     noise_clip=0.5,
     policy_noise = 0.2,
     omega_noise_rate : float = 0.2,
-    omega_std : float = 1,
+    omega_std : float = 0.3, # 원래1.0 
     omega_clip : float = 0.5,
     num_omegas : int = 5,
     omega_distance_threshold: float = 0.1,
